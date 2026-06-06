@@ -22,30 +22,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $ciudad   = htmlspecialchars(trim($_POST['ciudad'] ?? ''));
     $id       = intval($_POST['id_suc'] ?? 0);
 
-    if ($accion === 'crear' && $nombre) {
-        /* BD: INSERT INTO sucursales (sucursal, direccion, ciudad) VALUES (?,?,?) */
-        $mensaje = "Sucursal '$nombre' creada."; $tipoMsg = 'success';
-    } elseif ($accion === 'editar' && $id > 0) {
-        /* BD: UPDATE sucursales SET sucursal=?, direccion=?, ciudad=? WHERE id_suc=? */
-        $mensaje = "Sucursal actualizada."; $tipoMsg = 'success';
-    } elseif ($accion === 'stock') {
-        $id_suc  = intval($_POST['id_suc_stock'] ?? 0);
-        $id_prod = intval($_POST['id_prod_stock'] ?? 0);
-        $cant    = intval($_POST['cantidad'] ?? 0);
-        /* BD: INSERT INTO stock ... ON DUPLICATE KEY UPDATE cantidad = ? */
-        $mensaje = "Stock actualizado."; $tipoMsg = 'success';
+    try {
+        if ($accion === 'crear' && $nombre) {
+            lm_guardar_sucursal([
+                'id_suc' => 0,
+                'sucursal' => $nombre,
+                'direccion' => $dir,
+            ]);
+            $mensaje = "Sucursal '$nombre' creada."; $tipoMsg = 'success';
+        } elseif ($accion === 'editar' && $id > 0) {
+            lm_guardar_sucursal([
+                'id_suc' => $id,
+                'sucursal' => $nombre,
+                'direccion' => $dir,
+            ]);
+            $mensaje = "Sucursal actualizada."; $tipoMsg = 'success';
+        } elseif ($accion === 'stock') {
+            $id_suc  = intval($_POST['id_suc_stock'] ?? 0);
+            $id_prod = intval($_POST['id_prod_stock'] ?? 0);
+            $cant    = intval($_POST['cantidad'] ?? 0);
+            lm_stock_actualizar($id_suc, $id_prod, $cant, 'Ajuste manual desde sucursales');
+            $mensaje = "Stock actualizado."; $tipoMsg = 'success';
+        }
+    } catch (Throwable $e) {
+        $mensaje = $e->getMessage(); $tipoMsg = 'danger';
     }
 }
 
 if (isset($_GET['eliminar'])) {
     $id = intval($_GET['eliminar']);
-    /* BD: DELETE FROM sucursales WHERE id_suc = ? (validar que no tenga ventas) */
-    $mensaje = "Sucursal eliminada (si no tenía dependencias)."; $tipoMsg = 'warning';
+    try {
+        lm_desactivar_sucursal($id);
+        $mensaje = "Sucursal desactivada (borrado lógico)."; $tipoMsg = 'warning';
+    } catch (Throwable $e) {
+        $mensaje = $e->getMessage(); $tipoMsg = 'danger';
+    }
 }
 
-$sucursales = []; /* BD: sucursales */
-$stock      = []; /* BD: stock JOIN productos */
-$productos  = []; /* BD: productos activos para selector */
+$sucursales = lm_sucursales_listar(false);
+$stock      = lm_stock_todos();
+$productos  = lm_catalogo_productos(true);
+$sucursalesOperativas = lm_sucursales_operativas();
 ?>
 
 <div class="lm-page">
@@ -78,7 +95,7 @@ $productos  = []; /* BD: productos activos para selector */
         <div class="table-responsive">
             <table class="lm-table">
                 <thead>
-                    <tr><th>#ID</th><th>Sucursal</th><th>Dirección</th><th>Ciudad</th><th>Acciones</th></tr>
+                    <tr><th>#ID</th><th>Sucursal</th><th>Dirección</th><th>Estado</th><th>Acciones</th></tr>
                 </thead>
                 <tbody>
                 <?php if (empty($sucursales)): ?>
@@ -90,14 +107,14 @@ $productos  = []; /* BD: productos activos para selector */
                         <td class="text-muted">#<?= $s['id_suc'] ?></td>
                         <td><strong><?= htmlspecialchars($s['sucursal']) ?></strong></td>
                         <td><?= htmlspecialchars($s['direccion']) ?></td>
-                        <td><?= htmlspecialchars($s['ciudad']) ?></td>
+                        <td><span class="lm-badge <?= (int) ($s['activo'] ?? 1) === 1 ? 'badge-activo' : 'badge-inactivo' ?>"><?= (int) ($s['activo'] ?? 1) === 1 ? 'Activa' : 'Inactiva' ?></span></td>
                         <td>
                             <div class="d-flex gap-1">
                                 <button class="btn-lm-edit btn btn-sm btn-editar-suc"
                                     data-id="<?= $s['id_suc'] ?>"
                                     data-nombre="<?= htmlspecialchars($s['sucursal']) ?>"
                                     data-dir="<?= htmlspecialchars($s['direccion']) ?>"
-                                    data-ciudad="<?= htmlspecialchars($s['ciudad']) ?>"
+                                    data-ciudad="<?= htmlspecialchars($s['direccion']) ?>"
                                     data-bs-toggle="modal" data-bs-target="#modalSucursal">
                                     <i class="bi bi-pencil"></i>
                                 </button>
@@ -199,7 +216,7 @@ $productos  = []; /* BD: productos activos para selector */
                         <label class="lm-form-label">Sucursal <span class="text-danger">*</span></label>
                         <select name="id_suc_stock" class="lm-input form-select" required>
                             <option value="">Seleccionar...</option>
-                            <?php foreach ($sucursales as $s): ?>
+                            <?php foreach ($sucursalesOperativas as $s): ?>
                                 <option value="<?= $s['id_suc'] ?>"><?= htmlspecialchars($s['sucursal']) ?></option>
                             <?php endforeach; ?>
                         </select>

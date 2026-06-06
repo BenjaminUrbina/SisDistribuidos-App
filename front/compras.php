@@ -24,37 +24,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $contacto = htmlspecialchars(trim($_POST['contacto'] ?? ''));
     $id       = intval($_POST['id_prov'] ?? 0);
 
-    if ($accion === 'crear_prov' && $nombre) {
-        /* BD: INSERT INTO proveedores (proveedor, contacto) VALUES (?,?) */
-        $mensaje = "Proveedor '$nombre' registrado."; $tipoMsg = 'success';
-    } elseif ($accion === 'editar_prov' && $id > 0) {
-        /* BD: UPDATE proveedores SET proveedor=?, contacto=? WHERE id_prov=? */
-        $mensaje = "Proveedor actualizado."; $tipoMsg = 'success';
-    } elseif ($accion === 'crear_compra') {
-        $id_prov = intval($_POST['id_prov_compra'] ?? 0);
-        $id_prod = intval($_POST['id_prod_compra'] ?? 0);
-        $id_suc  = intval($_POST['id_suc_compra']  ?? 0);
-        $cant    = intval($_POST['cantidad_compra'] ?? 0);
-        $precio  = floatval($_POST['precio_compra'] ?? 0);
-        if ($id_prov && $id_prod && $id_suc && $cant > 0) {
-            /* BD: Transacción ACID: INSERT compra + detalle + UPDATE stock */
-            $mensaje = "Compra registrada y stock actualizado (ACID)."; $tipoMsg = 'success';
-        } else {
-            $mensaje = "Completa todos los campos."; $tipoMsg = 'danger';
+    try {
+        if ($accion === 'crear_prov' && $nombre) {
+            lm_guardar_proveedor([
+                'id_prov' => 0,
+                'proveedor' => $nombre,
+                'contacto' => $contacto,
+            ]);
+            $mensaje = "Proveedor '$nombre' registrado."; $tipoMsg = 'success';
+        } elseif ($accion === 'editar_prov' && $id > 0) {
+            lm_guardar_proveedor([
+                'id_prov' => $id,
+                'proveedor' => $nombre,
+                'contacto' => $contacto,
+            ]);
+            $mensaje = "Proveedor actualizado."; $tipoMsg = 'success';
+        } elseif ($accion === 'crear_compra') {
+            $id_prov = intval($_POST['id_prov_compra'] ?? 0);
+            $id_prod = intval($_POST['id_prod_compra'] ?? 0);
+            $id_suc  = intval($_POST['id_suc_compra']  ?? 0);
+            $cant    = intval($_POST['cantidad_compra'] ?? 0);
+            $precio  = floatval($_POST['precio_compra'] ?? 0);
+            if ($id_prov && $id_prod && $id_suc && $cant > 0) {
+                lm_registrar_compra($id_prov, $id_suc, $id_prod, $cant, $precio);
+                $mensaje = "Compra registrada y stock actualizado (ACID)."; $tipoMsg = 'success';
+            } else {
+                $mensaje = "Completa todos los campos."; $tipoMsg = 'danger';
+            }
         }
+    } catch (Throwable $e) {
+        $mensaje = $e->getMessage(); $tipoMsg = 'danger';
     }
 }
 
 if (isset($_GET['eliminar_prov'])) {
     $id = intval($_GET['eliminar_prov']);
-    /* BD: UPDATE proveedores SET activo=0 WHERE id_prov=? */
-    $mensaje = "Proveedor desactivado."; $tipoMsg = 'warning';
+    try {
+        lm_desactivar_proveedor($id);
+        $mensaje = "Proveedor desactivado."; $tipoMsg = 'warning';
+    } catch (Throwable $e) {
+        $mensaje = $e->getMessage(); $tipoMsg = 'danger';
+    }
 }
 
-$proveedores = []; /* BD */
-$compras     = []; /* BD */
-$productos   = []; /* BD */
-$sucursales  = []; /* BD */
+$proveedores = lm_proveedores_listar(false);
+$compras     = lm_compras_listar();
+$productos   = lm_catalogo_productos(true);
+$sucursales  = lm_sucursales_operativas();
 ?>
 
 <div class="lm-page">
@@ -97,19 +113,19 @@ $sucursales  = []; /* BD */
                             </td></tr>
                         <?php else: foreach ($proveedores as $p): ?>
                             <tr>
-                                <td class="text-muted">#<?= $p['id_prov'] ?></td>
-                                <td><strong><?= htmlspecialchars($p['proveedor']) ?></strong></td>
-                                <td class="text-muted"><?= htmlspecialchars($p['contacto']) ?></td>
+                                <td class="text-muted">#<?= (int) ($p['id_proveedor'] ?? 0) ?></td>
+                                <td><strong><?= htmlspecialchars((string) ($p['proveedor'] ?? '')) ?></strong></td>
+                                <td class="text-muted"><?= htmlspecialchars((string) ($p['contacto'] ?? ($p['telefono'] ?? '')) ) ?></td>
                                 <td>
                                     <div class="d-flex gap-1">
                                         <button class="btn-lm-edit btn btn-sm btn-editar-prov"
-                                            data-id="<?= $p['id_prov'] ?>"
-                                            data-nombre="<?= htmlspecialchars($p['proveedor']) ?>"
-                                            data-contacto="<?= htmlspecialchars($p['contacto']) ?>"
+                                            data-id="<?= (int) ($p['id_proveedor'] ?? 0) ?>"
+                                            data-nombre="<?= htmlspecialchars((string) ($p['proveedor'] ?? '')) ?>"
+                                            data-contacto="<?= htmlspecialchars((string) ($p['contacto'] ?? ($p['telefono'] ?? '')) ) ?>"
                                             data-bs-toggle="modal" data-bs-target="#modalProveedor">
                                             <i class="bi bi-pencil"></i>
                                         </button>
-                                        <a href="?eliminar_prov=<?= $p['id_prov'] ?>" class="btn-lm-danger btn btn-sm btn-eliminar">
+                                        <a href="?eliminar_prov=<?= (int) ($p['id_proveedor'] ?? 0) ?>" class="btn-lm-danger btn btn-sm btn-eliminar">
                                             <i class="bi bi-trash3"></i>
                                         </a>
                                     </div>
@@ -138,12 +154,12 @@ $sucursales  = []; /* BD */
                             </td></tr>
                         <?php else: foreach ($compras as $c): ?>
                             <tr>
-                                <td class="text-muted">#<?= $c['id_compra'] ?></td>
-                                <td><?= htmlspecialchars($c['proveedor']) ?></td>
-                                <td><?= htmlspecialchars($c['producto']) ?></td>
-                                <td><?= $c['cantidad'] ?></td>
-                                <td>$<?= number_format($c['total'], 2) ?></td>
-                                <td><?= date('d/m/Y', strtotime($c['fecha'])) ?></td>
+                                <td class="text-muted">#<?= (int) ($c['id_compra'] ?? 0) ?></td>
+                                <td><?= htmlspecialchars((string) ($c['proveedor'] ?? '')) ?></td>
+                                <td><?= htmlspecialchars((string) ($c['producto'] ?? 'Sin producto')) ?></td>
+                                <td><?= (int) ($c['cantidad'] ?? 0) ?></td>
+                                <td>$<?= number_format((float) ($c['total'] ?? 0), 2) ?></td>
+                                <td><?= date('d/m/Y', strtotime((string) ($c['fecha'] ?? date('Y-m-d')))) ?></td>
                             </tr>
                         <?php endforeach; endif; ?>
                         </tbody>
@@ -202,7 +218,7 @@ $sucursales  = []; /* BD */
                         <select name="id_prov_compra" class="lm-input form-select" required>
                             <option value="">Seleccionar...</option>
                             <?php foreach ($proveedores as $p): ?>
-                                <option value="<?= $p['id_prov'] ?>"><?= htmlspecialchars($p['proveedor']) ?></option>
+                            <option value="<?= $p['id_proveedor'] ?>"><?= htmlspecialchars($p['proveedor']) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>

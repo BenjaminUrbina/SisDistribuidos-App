@@ -3,35 +3,15 @@ require_once 'includes/auth.php';
 lm_requiere_roles(['vendedor']);
 require_once 'includes/header.php';
 
-function lm_nombre_por_id(array $items, string $campoId, string $campoNombre, int $id, string $fallback = 'N/A'): string {
-    foreach ($items as $item) {
-        if ((int) ($item[$campoId] ?? 0) === $id) {
-            return (string) ($item[$campoNombre] ?? $fallback);
-        }
-    }
-
-    return $fallback;
-}
-
-function lm_indice_stock_sucursal(array $stock, int $idSuc, int $idProd): int {
-    foreach ($stock as $idx => $item) {
-        if ((int) ($item['id_suc'] ?? 0) === $idSuc && (int) ($item['id_prod'] ?? 0) === $idProd) {
-            return $idx;
-        }
-    }
-
-    return -1;
-}
-
 $usuario = lm_usuario_actual() ?? ['cliente' => 'Vendedor', 'rol' => 'vendedor'];
 $mensaje = '';
 $tipoMsg = 'info';
 
-$productos =& lm_demo_bucket('productos');
-$sucursales =& lm_demo_bucket('sucursales');
-$stock =& lm_demo_bucket('stock');
-$proveedores =& lm_demo_bucket('proveedores');
-$compras =& lm_demo_bucket('compras');
+$productos = lm_catalogo_productos(false);
+$sucursales = lm_sucursales_operativas();
+$stock = lm_stock_todos();
+$proveedores = lm_proveedores_listar(true);
+$compras = lm_compras_listar();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $accion = $_POST['accion'] ?? '';
@@ -41,27 +21,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $precio = (float) ($_POST['precio'] ?? 0);
         $descripcion = trim($_POST['descripcion'] ?? '');
 
-        if ($nombre !== '' && $precio > 0) {
-            $nuevoId = lm_siguiente_id($productos, 'id_prod');
-            $productos[] = [
-                'id_prod' => $nuevoId,
-                'producto' => $nombre,
-                'precio' => $precio,
-                'descripcion' => $descripcion,
-            ];
-
-            foreach ($sucursales as $sucursal) {
-                $stock[] = [
-                    'id_suc' => (int) $sucursal['id_suc'],
-                    'id_prod' => $nuevoId,
-                    'cantidad' => 0,
-                ];
+        try {
+            if ($nombre !== '' && $precio > 0) {
+                lm_guardar_producto([
+                    'producto' => $nombre,
+                    'precio' => $precio,
+                    'descripcion' => $descripcion,
+                ]);
+                $mensaje = 'Producto creado.';
+                $tipoMsg = 'success';
+            } else {
+                $mensaje = 'Completa nombre y precio.';
+                $tipoMsg = 'danger';
             }
-
-            $mensaje = 'Producto creado. El flujo queda listo para reemplazar el array por INSERT real.';
-            $tipoMsg = 'success';
-        } else {
-            $mensaje = 'Completa nombre y precio.';
+        } catch (Throwable $e) {
+            $mensaje = $e->getMessage();
             $tipoMsg = 'danger';
         }
     } elseif ($accion === 'registrar_compra') {
@@ -70,37 +44,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $idSuc = (int) ($_POST['id_suc'] ?? 0);
         $cantidad = max(1, (int) ($_POST['cantidad'] ?? 1));
         $costo = (float) ($_POST['costo'] ?? 0);
-
-        $proveedor = lm_indexar_por_id($proveedores, 'id_prov', $idProv);
-        $producto = lm_indexar_por_id($productos, 'id_prod', $idProd);
-        $sucursal = lm_indexar_por_id($sucursales, 'id_suc', $idSuc);
-
-        if ($proveedor && $producto && $sucursal && $costo >= 0) {
-            $idxStock = lm_indice_stock_sucursal($stock, $idSuc, $idProd);
-            if ($idxStock >= 0) {
-                $stock[$idxStock]['cantidad'] = (int) $stock[$idxStock]['cantidad'] + $cantidad;
+        try {
+            if ($idProv && $idProd && $idSuc && $costo >= 0) {
+                lm_registrar_compra($idProv, $idSuc, $idProd, $cantidad, $costo);
+                $mensaje = 'Compra registrada y stock actualizado.';
+                $tipoMsg = 'success';
             } else {
-                $stock[] = [
-                    'id_suc' => $idSuc,
-                    'id_prod' => $idProd,
-                    'cantidad' => $cantidad,
-                ];
+                $mensaje = 'Verifica proveedor, producto, sucursal y costo.';
+                $tipoMsg = 'danger';
             }
-
-            $compras[] = [
-                'id_compra' => lm_siguiente_id($compras, 'id_compra'),
-                'proveedor' => $proveedor['proveedor'],
-                'producto' => $producto['producto'],
-                'sucursal' => $sucursal['sucursal'],
-                'cantidad' => $cantidad,
-                'costo' => $costo * $cantidad,
-                'fecha' => date('Y-m-d H:i'),
-            ];
-
-            $mensaje = 'Compra registrada y stock actualizado.';
-            $tipoMsg = 'success';
-        } else {
-            $mensaje = 'Verifica proveedor, producto, sucursal y costo.';
+        } catch (Throwable $e) {
+            $mensaje = $e->getMessage();
             $tipoMsg = 'danger';
         }
     }
@@ -111,7 +65,7 @@ $comprasRecientes = array_slice(array_reverse($compras), 0, 5);
 $stockResumen = array_slice($stock, 0, 6);
 $valorInventario = 0;
 foreach ($stock as $item) {
-    $producto = lm_indexar_por_id($productos, 'id_prod', (int) ($item['id_prod'] ?? 0));
+    $producto = lm_producto_por_id((int) ($item['id_prod'] ?? 0));
     if ($producto) {
         $valorInventario += ((float) $producto['precio']) * (int) ($item['cantidad'] ?? 0);
     }
@@ -241,7 +195,7 @@ foreach ($stock as $item) {
                                 <select name="id_prov" class="lm-input form-select" required>
                                     <option value="">Seleccionar...</option>
                                     <?php foreach ($proveedores as $proveedor): ?>
-                                        <option value="<?= (int) $proveedor['id_prov'] ?>"><?= htmlspecialchars($proveedor['proveedor']) ?></option>
+                                <option value="<?= (int) $proveedor['id_proveedor'] ?>"><?= htmlspecialchars($proveedor['proveedor']) ?></option>
                                     <?php endforeach; ?>
                                 </select>
                             </div>
@@ -296,8 +250,8 @@ foreach ($stock as $item) {
                             <tbody>
                                 <?php foreach ($stockResumen as $item): ?>
                                     <tr>
-                                        <td><?= htmlspecialchars(lm_nombre_por_id($sucursales, 'id_suc', 'sucursal', (int) $item['id_suc'])) ?></td>
-                                        <td><?= htmlspecialchars(lm_nombre_por_id($productos, 'id_prod', 'producto', (int) $item['id_prod'])) ?></td>
+                                        <td><?= htmlspecialchars($item['sucursal'] ?? 'N/A') ?></td>
+                                        <td><?= htmlspecialchars($item['producto'] ?? 'N/A') ?></td>
                                         <td><span class="lm-badge <?= (int) $item['cantidad'] > 0 ? 'badge-activo' : 'badge-inactivo' ?>"><?= (int) $item['cantidad'] ?></span></td>
                                     </tr>
                                 <?php endforeach; ?>

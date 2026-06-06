@@ -1,76 +1,42 @@
 <?php
-/**
- * Libre Mercado - Configuración de Base de Datos
- * Sistemas Distribuidos
- * -----------------------------------------------
- * Modifica los valores de cada nodo según tu entorno Apache/MySQL.
- */
 
-// ─── NODO PRINCIPAL (Ventas / Productos) ────────────────────────────────────
-define('DB_HOST_PRINCIPAL', 'localhost');
-define('DB_PORT_PRINCIPAL', '3306');
-define('DB_NAME_PRINCIPAL', 'libre_mercado_principal');
-define('DB_USER_PRINCIPAL', 'root');
-define('DB_PASS_PRINCIPAL', '');
-
-// ─── NODO SECUNDARIO (Stock / Sucursales) ────────────────────────────────────
-define('DB_HOST_SUCURSALES', 'localhost');
-define('DB_PORT_SUCURSALES', '3307');
-define('DB_NAME_SUCURSALES', 'libre_mercado_sucursales');
-define('DB_USER_SUCURSALES', 'root');
-define('DB_PASS_SUCURSALES', '');
-
-// ─── NODO TERCIARIO (Proveedores / Compras) ─────────────────────────────────
-define('DB_HOST_PROVEEDORES', 'localhost');
-define('DB_PORT_PROVEEDORES', '3308');
-define('DB_NAME_PROVEEDORES', 'libre_mercado_proveedores');
-define('DB_USER_PROVEEDORES', 'root');
-define('DB_PASS_PROVEEDORES', '');
-
-// ─── FUNCIÓN DE CONEXIÓN PDO ─────────────────────────────────────────────────
-/**
- * Crea una conexión PDO al nodo especificado.
- * @param string $nodo 'principal' | 'sucursales' | 'proveedores'
- * @return PDO|null
- */
-function conectarNodo(string $nodo = 'principal'): ?PDO {
-    $configs = [
-        'principal'   => [DB_HOST_PRINCIPAL,   DB_PORT_PRINCIPAL,   DB_NAME_PRINCIPAL,   DB_USER_PRINCIPAL,   DB_PASS_PRINCIPAL],
-        'sucursales'  => [DB_HOST_SUCURSALES,  DB_PORT_SUCURSALES,  DB_NAME_SUCURSALES,  DB_USER_SUCURSALES,  DB_PASS_SUCURSALES],
-        'proveedores' => [DB_HOST_PROVEEDORES, DB_PORT_PROVEEDORES, DB_NAME_PROVEEDORES, DB_USER_PROVEEDORES, DB_PASS_PROVEEDORES],
-    ];
-
-    if (!isset($configs[$nodo])) return null;
-
-    [$host, $port, $dbname, $user, $pass] = $configs[$nodo];
-
-    try {
-        $dsn = "mysql:host=$host;port=$port;dbname=$dbname;charset=utf8mb4";
-        $pdo = new PDO($dsn, $user, $pass, [
-            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES   => false,
-        ]);
-        return $pdo;
-    } catch (PDOException $e) {
-        // En producción: registrar en log en lugar de mostrar el error.
-        error_log("Error nodo [$nodo]: " . $e->getMessage());
-        return null;
-    }
-}
-
-// ─── VERIFICAR ESTADO DE NODOS ───────────────────────────────────────────────
-function estadoNodos(): array {
-    $nodos = ['principal', 'sucursales', 'proveedores'];
-    $estado = [];
-    foreach ($nodos as $n) {
-        $pdo = conectarNodo($n);
-        $estado[$n] = ($pdo !== null) ? 'online' : 'offline';
-    }
-    return $estado;
-}
-
-// ─── SESIÓN ──────────────────────────────────────────────────────────────────
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+
+define('LM_DB_HOST_CENTRAL', getenv('LM_DB_HOST_CENTRAL') ?: (PHP_SAPI === 'cli' ? '127.0.0.1' : 'mysql-central'));
+define('LM_DB_PORT_CENTRAL', getenv('LM_DB_PORT_CENTRAL') ?: (PHP_SAPI === 'cli' ? '3307' : '3306'));
+define('LM_DB_NAME_CENTRAL', getenv('LM_DB_NAME_CENTRAL') ?: 'libremercado_central');
+
+define('LM_DB_HOST_SUCURSAL1', getenv('LM_DB_HOST_SUCURSAL1') ?: (PHP_SAPI === 'cli' ? '127.0.0.1' : 'mysql-sucursal1'));
+define('LM_DB_PORT_SUCURSAL1', getenv('LM_DB_PORT_SUCURSAL1') ?: (PHP_SAPI === 'cli' ? '3308' : '3306'));
+define('LM_DB_NAME_SUCURSAL1', getenv('LM_DB_NAME_SUCURSAL1') ?: 'libremercado_sucursal1');
+
+define('LM_DB_HOST_SUCURSAL2', getenv('LM_DB_HOST_SUCURSAL2') ?: (PHP_SAPI === 'cli' ? '127.0.0.1' : 'mysql-sucursal2'));
+define('LM_DB_PORT_SUCURSAL2', getenv('LM_DB_PORT_SUCURSAL2') ?: (PHP_SAPI === 'cli' ? '3309' : '3306'));
+define('LM_DB_NAME_SUCURSAL2', getenv('LM_DB_NAME_SUCURSAL2') ?: 'libremercado_sucursal2');
+
+define('LM_DB_USER', getenv('LM_DB_USER') ?: 'root');
+define('LM_DB_PASS', getenv('LM_DB_PASS') ?: 'root');
+
+// Compatibilidad con la nomenclatura previa.
+define('DB_HOST_PRINCIPAL', LM_DB_HOST_CENTRAL);
+define('DB_PORT_PRINCIPAL', LM_DB_PORT_CENTRAL);
+define('DB_NAME_PRINCIPAL', LM_DB_NAME_CENTRAL);
+define('DB_USER_PRINCIPAL', LM_DB_USER);
+define('DB_PASS_PRINCIPAL', LM_DB_PASS);
+
+define('DB_HOST_SUCURSALES', LM_DB_HOST_SUCURSAL1);
+define('DB_PORT_SUCURSALES', LM_DB_PORT_SUCURSAL1);
+define('DB_NAME_SUCURSALES', LM_DB_NAME_SUCURSAL1);
+define('DB_USER_SUCURSALES', LM_DB_USER);
+define('DB_PASS_SUCURSALES', LM_DB_PASS);
+
+define('DB_HOST_PROVEEDORES', LM_DB_HOST_SUCURSAL2);
+define('DB_PORT_PROVEEDORES', LM_DB_PORT_SUCURSAL2);
+define('DB_NAME_PROVEEDORES', LM_DB_NAME_SUCURSAL2);
+define('DB_USER_PROVEEDORES', LM_DB_USER);
+define('DB_PASS_PROVEEDORES', LM_DB_PASS);
+
+require_once __DIR__ . '/lm_database.php';
+require_once __DIR__ . '/lm_services.php';

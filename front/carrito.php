@@ -49,63 +49,121 @@ require_once 'includes/header.php';
  */
 
 $mensaje = ''; $tipoMsg = '';
+$usuario = lm_usuario_actual();
+$usaDbCarrito = $usuario && (($usuario['rol'] ?? '') === 'cliente') && !empty($usuario['id_cli']);
 
-// Sesión del carrito
-if (!isset($_SESSION['carrito'])) $_SESSION['carrito'] = [];
-
-// ── Agregar al carrito ────────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'agregar') {
-    $id_prod  = intval($_POST['id_prod']   ?? 0);
-    $cantidad = intval($_POST['cantidad']  ?? 1);
-    $nombre   = htmlspecialchars($_POST['nombre_prod'] ?? '');
-    $precio   = floatval($_POST['precio_prod'] ?? 0);
-
-    if ($id_prod && $cantidad > 0) {
-        if (isset($_SESSION['carrito'][$id_prod])) {
-            $_SESSION['carrito'][$id_prod]['cantidad'] += $cantidad;
-        } else {
-            $_SESSION['carrito'][$id_prod] = ['id_prod'=>$id_prod, 'nombre'=>$nombre, 'precio'=>$precio, 'cantidad'=>$cantidad];
-        }
-        $mensaje = "Producto agregado al carrito."; $tipoMsg = 'success';
-    }
-}
-
-// ── Quitar del carrito ────────────────────────────────────────────────────
-if (isset($_GET['quitar'])) {
-    unset($_SESSION['carrito'][intval($_GET['quitar'])]);
-    $mensaje = "Producto removido."; $tipoMsg = 'warning';
-}
-
-// ── Vaciar carrito ────────────────────────────────────────────────────────
-if (isset($_GET['vaciar'])) {
+if (!isset($_SESSION['carrito'])) {
     $_SESSION['carrito'] = [];
-    $mensaje = "Carrito vaciado."; $tipoMsg = 'warning';
 }
 
-// ── Confirmar venta (transacción ACID) ────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'confirmar') {
-    $id_cli   = intval($_POST['id_cli']  ?? 0);
-    $id_suc   = intval($_POST['id_suc'] ?? 0);
-    $carrito  = $_SESSION['carrito'] ?? [];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'agregar') {
+    $id_prod  = intval($_POST['id_prod'] ?? 0);
+    $cantidad = intval($_POST['cantidad'] ?? 1);
 
-    if ($id_cli && $id_suc && !empty($carrito)) {
-        /*
-         * TODO BD: Ejecutar transacción ACID distribuida (ver comentario arriba)
-         */
-        $_SESSION['carrito'] = [];
-        $mensaje = "¡Venta registrada exitosamente! Transacción ACID completada."; $tipoMsg = 'success';
-    } else {
-        $mensaje = "Selecciona cliente, sucursal y al menos un producto."; $tipoMsg = 'danger';
+    try {
+        if ($usaDbCarrito) {
+            lm_carrito_agregar_item((int) $usuario['id_cli'], $id_prod, $cantidad);
+            $mensaje = 'Producto agregado al carrito.';
+            $tipoMsg = 'success';
+        } elseif ($id_prod && $cantidad > 0) {
+            if (isset($_SESSION['carrito'][$id_prod])) {
+                $_SESSION['carrito'][$id_prod]['cantidad'] += $cantidad;
+            } else {
+                $producto = lm_producto_por_id($id_prod);
+                $_SESSION['carrito'][$id_prod] = [
+                    'id_prod' => $id_prod,
+                    'nombre' => $producto['producto'] ?? ($_POST['nombre_prod'] ?? ''),
+                    'precio' => (float) ($producto['precio'] ?? ($_POST['precio_prod'] ?? 0)),
+                    'cantidad' => $cantidad,
+                ];
+            }
+            $mensaje = 'Producto agregado al carrito.';
+            $tipoMsg = 'success';
+        }
+    } catch (Throwable $e) {
+        $mensaje = $e->getMessage();
+        $tipoMsg = 'danger';
     }
 }
 
-// Datos para selectores (reemplazar con consultas reales)
-$productos  = []; /* BD: SELECT id_prod, producto, precio FROM productos WHERE activo=1 */
-$clientes   = []; /* BD: SELECT id_cli, cliente FROM clientes WHERE activo=1 */
-$sucursales = []; /* BD: SELECT id_suc, sucursal FROM sucursales */
+if (isset($_GET['quitar'])) {
+    try {
+        if ($usaDbCarrito) {
+            lm_carrito_eliminar_item((int) $usuario['id_cli'], intval($_GET['quitar']));
+        } else {
+            unset($_SESSION['carrito'][intval($_GET['quitar'])]);
+        }
+        $mensaje = 'Producto removido.';
+        $tipoMsg = 'warning';
+    } catch (Throwable $e) {
+        $mensaje = $e->getMessage();
+        $tipoMsg = 'danger';
+    }
+}
 
-$carrito = $_SESSION['carrito'];
-$total   = array_sum(array_map(fn($i) => $i['precio'] * $i['cantidad'], $carrito));
+if (isset($_GET['vaciar'])) {
+    try {
+        if ($usaDbCarrito) {
+            lm_carrito_vaciar((int) $usuario['id_cli']);
+        } else {
+            $_SESSION['carrito'] = [];
+        }
+        $mensaje = 'Carrito vaciado.';
+        $tipoMsg = 'warning';
+    } catch (Throwable $e) {
+        $mensaje = $e->getMessage();
+        $tipoMsg = 'danger';
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'confirmar') {
+    $id_cli = intval($_POST['id_cli'] ?? ($usuario['id_cli'] ?? 0));
+    $id_suc = intval($_POST['id_suc'] ?? 0);
+
+    try {
+        if ($usaDbCarrito) {
+            $carritoDb = lm_carrito_activo((int) $usuario['id_cli']);
+            if (empty($carritoDb['items'])) {
+                throw new RuntimeException('El carrito está vacío.');
+            }
+            lm_registrar_venta((int) $usuario['id_cli'], $id_suc, $carritoDb['items'], (int) $carritoDb['id_carrito']);
+        } else {
+            $carritoSesion = array_values($_SESSION['carrito'] ?? []);
+            $items = array_map(static function (array $item): array {
+                return [
+                    'id_prod' => (int) $item['id_prod'],
+                    'cantidad' => (int) $item['cantidad'],
+                    'precio_unitario' => (float) $item['precio'],
+                ];
+            }, $carritoSesion);
+            if ($id_cli && $id_suc && !empty($items)) {
+                lm_registrar_venta($id_cli, $id_suc, $items);
+                $_SESSION['carrito'] = [];
+            } else {
+                throw new RuntimeException('Selecciona cliente, sucursal y al menos un producto.');
+            }
+        }
+
+        $mensaje = '¡Venta registrada exitosamente! Transacción ACID completada.';
+        $tipoMsg = 'success';
+    } catch (Throwable $e) {
+        $mensaje = $e->getMessage();
+        $tipoMsg = 'danger';
+    }
+}
+
+$productos  = lm_catalogo_productos(true);
+$clientes   = lm_clientes_listar(true);
+$sucursales = lm_sucursales_operativas();
+
+if ($usaDbCarrito) {
+    $carritoDb = lm_carrito_activo((int) $usuario['id_cli']);
+    $carrito = $carritoDb['items'];
+    $total = (float) $carritoDb['total'];
+} else {
+    $carrito = array_values($_SESSION['carrito']);
+    $total = array_sum(array_map(static fn($i) => ((float) $i['precio']) * ((int) $i['cantidad']), $carrito));
+}
 ?>
 
 <div class="lm-page">
@@ -193,10 +251,10 @@ $total   = array_sum(array_map(fn($i) => $i['precio'] * $i['cantidad'], $carrito
                             </td></tr>
                         <?php else: foreach ($carrito as $item): ?>
                             <tr>
-                                <td><strong><?= htmlspecialchars($item['nombre']) ?></strong></td>
-                                <td>$<?= number_format($item['precio'], 2) ?></td>
-                                <td><?= $item['cantidad'] ?></td>
-                                <td>$<?= number_format($item['precio'] * $item['cantidad'], 2) ?></td>
+                                <td><strong><?= htmlspecialchars($item['producto'] ?? $item['nombre']) ?></strong></td>
+                                <td>$<?= number_format((float) ($item['precio_unitario'] ?? $item['precio']), 2) ?></td>
+                                <td><?= (int) $item['cantidad'] ?></td>
+                                <td>$<?= number_format(((float) ($item['precio_unitario'] ?? $item['precio'])) * ((int) $item['cantidad']), 2) ?></td>
                                 <td>
                                     <a href="?quitar=<?= $item['id_prod'] ?>" class="btn-lm-danger btn btn-sm">
                                         <i class="bi bi-x"></i>
@@ -225,7 +283,7 @@ $total   = array_sum(array_map(fn($i) => $i['precio'] * $i['cantidad'], $carrito
                                 <select name="id_cli" class="lm-input form-select" required>
                                     <option value="">Seleccionar...</option>
                                     <?php foreach ($clientes as $c): ?>
-                                        <option value="<?= $c['id_cli'] ?>"><?= htmlspecialchars($c['cliente']) ?></option>
+                                        <option value="<?= $c['id_cli'] ?>" <?= $usaDbCarrito && (int) ($usuario['id_cli'] ?? 0) === (int) $c['id_cli'] ? 'selected' : '' ?>><?= htmlspecialchars($c['cliente']) ?></option>
                                     <?php endforeach; ?>
                                 </select>
                             </div>

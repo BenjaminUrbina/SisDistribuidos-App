@@ -2,25 +2,16 @@
 // ─── includes ──────────────────────────────────────────────────────────
 require_once 'includes/header.php';
 
-/**
- * DASHBOARD — index.php
- * ─────────────────────
- * Cuando la BD esté lista, reemplaza los arrays de ejemplo con consultas PDO:
- *   $pdo = conectarNodo('principal');
- *   $stmt = $pdo->query("SELECT COUNT(*) FROM productos");
- *   $totalProductos = $stmt->fetchColumn();
- */
-
-// ── Datos de ejemplo (reemplazar con consultas reales) ─────────────────
+$statsData = lm_dashboard_stats();
 $stats = [
-    ['label' => 'Productos',   'value' => '—', 'icon' => 'bi-box-seam',    'bg' => 'bg-accent'],
-    ['label' => 'Clientes',    'value' => '—', 'icon' => 'bi-people',      'bg' => 'bg-info-lm'],
-    ['label' => 'Ventas Hoy',  'value' => '—', 'icon' => 'bi-receipt',     'bg' => 'bg-succ-lm'],
-    ['label' => 'Sucursales',  'value' => '—', 'icon' => 'bi-geo-alt',     'bg' => 'bg-warn-lm'],
+    ['label' => 'Productos',   'value' => $statsData['productos'], 'icon' => 'bi-box-seam',    'bg' => 'bg-accent'],
+    ['label' => 'Clientes',    'value' => $statsData['clientes'], 'icon' => 'bi-people',      'bg' => 'bg-info-lm'],
+    ['label' => 'Ventas Hoy',  'value' => $statsData['ventas_hoy'], 'icon' => 'bi-receipt',     'bg' => 'bg-succ-lm'],
+    ['label' => 'Sucursales',  'value' => $statsData['sucursales'], 'icon' => 'bi-geo-alt',     'bg' => 'bg-warn-lm'],
 ];
 
-$ultimasVentas = []; // SELECT TOP 5 FROM ventas ORDER BY fecha DESC
-$stockBajo     = []; // SELECT * FROM stock WHERE cantidad < umbral
+$ultimasVentas = lm_dashboard_ventas_recientes(5);
+$stockBajo     = lm_dashboard_stock_bajo();
 ?>
 
 <div class="lm-page">

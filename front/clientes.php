@@ -20,14 +20,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email  = filter_var(trim($_POST['email'] ?? ''), FILTER_SANITIZE_EMAIL);
     $rol    = $_POST['rol'] ?? 'cliente';
     $id     = intval($_POST['id_cli'] ?? 0);
+    $telefono = trim($_POST['telefono'] ?? '');
+    $direccion = trim($_POST['direccion'] ?? '');
+    $rut = trim($_POST['rut'] ?? '');
+    $password = (string) ($_POST['password'] ?? '');
 
     if ($nombre && $email) {
-        if ($accion === 'crear') {
-            /* BD: INSERT INTO clientes (cliente, email, rol) VALUES (?, ?, ?) */
-            $mensaje = "Cliente '$nombre' registrado."; $tipoMsg = 'success';
-        } elseif ($accion === 'editar' && $id > 0) {
-            /* BD: UPDATE clientes SET cliente=?, email=?, rol=? WHERE id_cli=? */
-            $mensaje = "Cliente actualizado."; $tipoMsg = 'success';
+        try {
+            if ($accion === 'crear' || $accion === 'editar') {
+                lm_guardar_cliente([
+                    'id_cli' => $id,
+                    'cliente' => $nombre,
+                    'email' => $email,
+                    'rol' => $rol,
+                    'telefono' => $telefono,
+                    'direccion' => $direccion,
+                    'rut' => $rut,
+                    'password' => $password,
+                ]);
+                $mensaje = $accion === 'crear' ? "Cliente '$nombre' registrado." : 'Cliente actualizado.';
+                $tipoMsg = 'success';
+            }
+        } catch (Throwable $e) {
+            $mensaje = $e->getMessage();
+            $tipoMsg = 'danger';
         }
     } else {
         $mensaje = "Nombre y email son obligatorios."; $tipoMsg = 'danger';
@@ -36,11 +52,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 if (isset($_GET['eliminar'])) {
     $id = intval($_GET['eliminar']);
-    /* BD: UPDATE clientes SET activo = 0 WHERE id_cli = $id */
-    $mensaje = "Cliente desactivado."; $tipoMsg = 'warning';
+    try {
+        lm_desactivar_cliente($id);
+        $mensaje = "Cliente desactivado.";
+        $tipoMsg = 'warning';
+    } catch (Throwable $e) {
+        $mensaje = $e->getMessage();
+        $tipoMsg = 'danger';
+    }
 }
 
-$clientes = []; /* BD: SELECT id_cli, cliente, email, rol, activo FROM clientes */
+$clientes = lm_clientes_listar(false);
 ?>
 
 <div class="lm-page">
@@ -83,13 +105,14 @@ $clientes = []; /* BD: SELECT id_cli, cliente, email, rol, activo FROM clientes 
                         <i class="bi bi-people d-block fs-2 mb-2"></i>Sin clientes registrados
                     </td></tr>
                 <?php else: foreach ($clientes as $c): ?>
+                    <?php $rol = (string) ($c['rol'] ?? 'cliente'); ?>
                     <tr>
                         <td class="text-muted">#<?= $c['id_cli'] ?></td>
                         <td><strong><?= htmlspecialchars($c['cliente']) ?></strong></td>
                         <td class="text-muted"><?= htmlspecialchars($c['email']) ?></td>
                         <td>
-                            <span class="lm-badge <?= $c['rol']==='admin' ? 'badge-admin' : 'badge-cliente' ?>">
-                                <?= ucfirst($c['rol']) ?>
+                            <span class="lm-badge <?= $rol==='admin' ? 'badge-admin' : ($rol==='vendedor' ? 'badge-pendiente' : 'badge-cliente') ?>">
+                                <?= ucfirst($rol) ?>
                             </span>
                         </td>
                         <td><span class="lm-badge <?= $c['activo'] ? 'badge-activo' : 'badge-inactivo' ?>">
@@ -101,7 +124,7 @@ $clientes = []; /* BD: SELECT id_cli, cliente, email, rol, activo FROM clientes 
                                     data-id="<?= $c['id_cli'] ?>"
                                     data-nombre="<?= htmlspecialchars($c['cliente']) ?>"
                                     data-email="<?= htmlspecialchars($c['email']) ?>"
-                                    data-rol="<?= $c['rol'] ?>"
+                                    data-rol="<?= htmlspecialchars($rol) ?>"
                                     data-bs-toggle="modal" data-bs-target="#modalCliente">
                                     <i class="bi bi-pencil"></i>
                                 </button>
@@ -144,6 +167,18 @@ $clientes = []; /* BD: SELECT id_cli, cliente, email, rol, activo FROM clientes 
                     <div class="mb-3">
                         <label class="lm-form-label">Contraseña <small class="text-muted">(solo al crear)</small></label>
                         <input type="password" name="password" class="lm-input form-control" placeholder="Mínimo 8 caracteres">
+                    </div>
+                    <div class="mb-3">
+                        <label class="lm-form-label">Teléfono</label>
+                        <input type="text" name="telefono" class="lm-input form-control" placeholder="+56 9 XXXX XXXX">
+                    </div>
+                    <div class="mb-3">
+                        <label class="lm-form-label">Dirección</label>
+                        <input type="text" name="direccion" class="lm-input form-control" placeholder="Calle y número">
+                    </div>
+                    <div class="mb-3">
+                        <label class="lm-form-label">RUT</label>
+                        <input type="text" name="rut" class="lm-input form-control" placeholder="12.345.678-9">
                     </div>
                     <div class="mb-3">
                         <label class="lm-form-label">Rol</label>

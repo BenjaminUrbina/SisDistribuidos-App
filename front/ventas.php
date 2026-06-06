@@ -4,24 +4,10 @@ require_once 'includes/header.php';
 /**
  * HISTORIAL DE VENTAS — ventas.php
  * TODO BD:
- *   $pdo = conectarNodo('principal');
- *   $ventas = $pdo->query("
- *       SELECT v.id_venta, c.cliente, s.sucursal, v.total, v.fecha, v.estado
- *       FROM ventas v
- *       JOIN clientes c ON v.id_cli = c.id_cli
- *       JOIN sucursales s ON v.id_suc = s.id_suc
- *       ORDER BY v.fecha DESC
- *   ")->fetchAll();
- *
- *   // Detalle de una venta:
- *   $detalle = $pdo->prepare("
- *       SELECT dv.*, p.producto FROM detalle_ventas dv
- *       JOIN productos p ON dv.id_prod = p.id_prod
- *       WHERE dv.id_venta = ?
- *   ")->execute([$id])->fetchAll();
  */
 
-$ventas = []; /* BD */
+$usuario = lm_usuario_actual();
+$ventas = (($usuario['rol'] ?? '') === 'cliente' && !empty($usuario['id_cli'])) ? lm_ventas_listar_por_cliente((int) $usuario['id_cli']) : lm_ventas_listar();
 ?>
 
 <div class="lm-page">
@@ -94,7 +80,7 @@ $ventas = []; /* BD */
             <div class="modal-body">
                 <div id="contenidoDetalle" class="text-muted text-center py-4">
                     <i class="bi bi-database-slash d-block fs-2 mb-2"></i>
-                    Conecta la BD para cargar el detalle vía AJAX / PDO.
+                    Selecciona una venta para ver el detalle.
                 </div>
             </div>
             <div class="modal-footer">
@@ -114,7 +100,36 @@ document.getElementById('buscador').addEventListener('input', function() {
 document.getElementById('modalDetalle').addEventListener('show.bs.modal', e => {
     const id = e.relatedTarget?.dataset.id;
     document.getElementById('idVentaModal').textContent = id ? '#' + id : '';
-    // TODO: fetch('api/detalle_venta.php?id=' + id).then(r=>r.json()).then(renderDetalle)
+    if (!id) return;
+
+    fetch('api/detalle_venta.php?id=' + id)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.ok) {
+                document.getElementById('contenidoDetalle').innerHTML = '<div class="text-danger">' + (data.error || 'No fue posible cargar el detalle.') + '</div>';
+                return;
+            }
+
+            const filas = data.detalle.map(item => `
+                <tr>
+                    <td>${item.producto}</td>
+                    <td>${item.cantidad}</td>
+                    <td>$${Number(item.precio_unitario).toLocaleString('es-CL')}</td>
+                    <td>$${Number(item.subtotal).toLocaleString('es-CL')}</td>
+                </tr>
+            `).join('');
+
+            document.getElementById('contenidoDetalle').innerHTML = `
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead><tr><th>Producto</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead>
+                        <tbody>${filas}</tbody>
+                    </table>
+                </div>`;
+        })
+        .catch(() => {
+            document.getElementById('contenidoDetalle').innerHTML = '<div class="text-danger">No fue posible cargar el detalle.</div>';
+        });
 });
 </script>
 

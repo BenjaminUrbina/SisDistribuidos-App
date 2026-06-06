@@ -1,8 +1,6 @@
 <?php
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+require_once __DIR__ . '/config.php';
 
 function lm_usuarios_demo(): array {
     return [
@@ -52,6 +50,30 @@ function lm_autenticar_demo(string $email, string $password): ?array {
     }
 
     return null;
+}
+
+function lm_autenticar_bd(string $email, string $password): ?array
+{
+    $usuario = lm_usuario_por_email($email);
+    if (!$usuario || (int) ($usuario['activo'] ?? 0) !== 1) {
+        return null;
+    }
+
+    $hash = (string) ($usuario['password'] ?? '');
+    $valido = password_verify($password, $hash) || hash_equals($hash, $password);
+    if (!$valido) {
+        return null;
+    }
+
+    $cliente = lm_fetch_one('central', 'SELECT id_cli, cliente FROM clientes WHERE email = ? LIMIT 1', [$email]);
+
+    return [
+        'id_usuario' => (int) $usuario['id_usuario'],
+        'id_cli' => (int) ($cliente['id_cli'] ?? 0),
+        'cliente' => $cliente['cliente'] ?? $usuario['nombre'],
+        'email' => $usuario['email'],
+        'rol' => $usuario['rol'],
+    ];
 }
 
 function lm_requiere_roles(array $roles): void {
@@ -165,4 +187,3 @@ function lm_siguiente_id(array $items, string $campoId): int {
 
     return $max + 1;
 }
-

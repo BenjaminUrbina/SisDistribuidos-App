@@ -35,12 +35,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $id     = intval($_POST['id_prod'] ?? 0);
 
     if ($nombre && $precio > 0) {
-        if ($accion === 'crear') {
-            /* BD: INSERT INTO productos ... */
-            $mensaje = "Producto '$nombre' creado exitosamente."; $tipoMsg = 'success';
-        } elseif ($accion === 'editar' && $id > 0) {
-            /* BD: UPDATE productos ... WHERE id_prod = $id */
-            $mensaje = "Producto actualizado."; $tipoMsg = 'success';
+        try {
+            if ($accion === 'crear' || $accion === 'editar') {
+                lm_guardar_producto([
+                    'id_prod' => $id,
+                    'producto' => $nombre,
+                    'precio' => $precio,
+                    'descripcion' => $desc,
+                ]);
+                $mensaje = $accion === 'crear' ? "Producto '$nombre' creado exitosamente." : 'Producto actualizado.';
+                $tipoMsg = 'success';
+            }
+        } catch (Throwable $e) {
+            $mensaje = $e->getMessage();
+            $tipoMsg = 'danger';
         }
     } else {
         $mensaje = "Completa todos los campos obligatorios."; $tipoMsg = 'danger';
@@ -50,12 +58,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // ── GET: Borrado lógico ───────────────────────────────────────────────────
 if (isset($_GET['eliminar'])) {
     $id = intval($_GET['eliminar']);
-    /* BD: UPDATE productos SET activo = 0 WHERE id_prod = $id */
-    $mensaje = "Producto desactivado (borrado lógico)."; $tipoMsg = 'warning';
+    try {
+        lm_desactivar_producto($id);
+        $mensaje = "Producto desactivado (borrado lógico).";
+        $tipoMsg = 'warning';
+    } catch (Throwable $e) {
+        $mensaje = $e->getMessage();
+        $tipoMsg = 'danger';
+    }
 }
 
 // ── LISTAR productos ──────────────────────────────────────────────────────
-$productos = []; /* BD: SELECT * FROM productos WHERE activo = 1 */
+$productos = lm_catalogo_productos(false);
 ?>
 
 <div class="lm-page">
@@ -111,7 +125,7 @@ $productos = []; /* BD: SELECT * FROM productos WHERE activo = 1 */
                         <td><strong><?= htmlspecialchars($p['producto']) ?></strong></td>
                         <td>$<?= number_format($p['precio'], 2) ?></td>
                         <td class="text-muted"><?= htmlspecialchars($p['descripcion']) ?></td>
-                        <td><span class="lm-badge badge-activo">Activo</span></td>
+                        <td><span class="lm-badge <?= (int) ($p['activo'] ?? 1) === 1 ? 'badge-activo' : 'badge-inactivo' ?>"><?= (int) ($p['activo'] ?? 1) === 1 ? 'Activo' : 'Inactivo' ?></span></td>
                         <td>
                             <div class="d-flex gap-1">
                                 <!-- Editar: rellena el modal con JS -->

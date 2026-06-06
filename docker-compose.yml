@@ -1,0 +1,33 @@
+services:
+  php-apache:
+    build:
+      context: .
+      dockerfile: docker/php-apache/Dockerfile
+    ports:
+      - "8080:80"
+    volumes:
+      - ./front:/var/www/html
+
+  mysql-central:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: libremercado_central
+    ports:
+      - "3307:3306"
+
+  mysql-sucursal1:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: libremercado_sucursal1
+    ports:
+      - "3308:3306"
+
+  mysql-sucursal2:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: libremercado_sucursal2
+    ports:
+      - "3309:3306"

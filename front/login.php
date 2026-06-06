@@ -13,14 +13,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = trim($_POST['email'] ?? '');
     $password = $_POST['password'] ?? '';
 
-    $usuario = lm_autenticar_demo($email, $password);
+    $usuario = lm_autenticar_bd($email, $password) ?? lm_autenticar_demo($email, $password);
     if ($usuario) {
         $_SESSION['lm_usuario'] = $usuario;
         header('Location: ' . lm_ruta_por_rol($usuario['rol']));
         exit;
     }
 
-    $error = 'Credenciales invalidas. Usa una cuenta demo o conecta tu autenticacion real.';
+    $error = 'Credenciales invalidas.';
 }
 ?>
 <!DOCTYPE html>
@@ -75,7 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <section class="lm-auth-panel">
         <div class="lm-auth-card">
             <h2>Ingresar al sistema</h2>
-            <p>Usa una cuenta demo mientras conectas la base real.</p>
+                <p>Acceso contra la base real con fallback demo para pruebas locales.</p>
 
             <?php if ($error): ?>
                 <div class="alert alert-danger mt-4 mb-0">
@@ -103,7 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <strong class="small">Listo para conectar autenticación real</strong>
                 </div>
                 <div class="small text-muted">
-                    Reemplaza las credenciales demo por validación contra tu tabla <code>clientes</code> cuando conectes la base.
+                    La validación usa la tabla <code>usuarios</code> y, si no existe la cuenta, conserva las credenciales demo.
                 </div>
             </div>
         </div>

@@ -3,36 +3,19 @@ require_once 'includes/auth.php';
 lm_requiere_roles(['cliente']);
 require_once 'includes/header.php';
 
-function lm_stock_total_producto(array $stock, int $idProd): int {
-    $total = 0;
-    foreach ($stock as $item) {
-        if ((int) ($item['id_prod'] ?? 0) === $idProd) {
-            $total += (int) ($item['cantidad'] ?? 0);
-        }
-    }
-
-    return $total;
-}
-
-function lm_indice_stock_sucursal(array $stock, int $idSuc, int $idProd): int {
-    foreach ($stock as $idx => $item) {
-        if ((int) ($item['id_suc'] ?? 0) === $idSuc && (int) ($item['id_prod'] ?? 0) === $idProd) {
-            return $idx;
-        }
-    }
-
-    return -1;
-}
-
 $usuario = lm_usuario_actual() ?? ['cliente' => 'Cliente', 'rol' => 'cliente'];
 $mensaje = '';
 $tipoMsg = 'info';
 
-$productos =& lm_demo_bucket('productos');
-$sucursales =& lm_demo_bucket('sucursales');
-$stock =& lm_demo_bucket('stock');
-$carrito =& lm_demo_bucket('carrito');
-$ventas =& lm_demo_bucket('ventas');
+$productos = lm_catalogo_productos(true);
+$sucursales = lm_sucursales_operativas();
+$stock = lm_stock_todos();
+
+if (!isset($_SESSION['carrito_cliente'])) {
+    $_SESSION['carrito_cliente'] = [];
+}
+$carrito =& $_SESSION['carrito_cliente'];
+$ventas = !empty($usuario['id_cli']) ? lm_ventas_listar_por_cliente((int) $usuario['id_cli']) : [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $accion = $_POST['accion'] ?? '';
@@ -40,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($accion === 'agregar_carrito') {
         $idProd = (int) ($_POST['id_prod'] ?? 0);
         $cantidad = max(1, (int) ($_POST['cantidad'] ?? 1));
-        $producto = lm_indexar_por_id($productos, 'id_prod', $idProd);
+            $producto = lm_producto_por_id($idProd);
 
         if ($producto) {
             if (!isset($carrito[$idProd])) {
@@ -83,32 +66,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $mensaje = 'Selecciona una sucursal valida.';
             $tipoMsg = 'danger';
         } else {
-            foreach ($carrito as $item) {
-                $idxStock = lm_indice_stock_sucursal($stock, $idSuc, (int) $item['id_prod']);
-                if ($idxStock >= 0) {
-                    $stock[$idxStock]['cantidad'] = max(0, (int) $stock[$idxStock]['cantidad'] - (int) $item['cantidad']);
-                } else {
-                    $stock[] = [
-                        'id_suc' => $idSuc,
-                        'id_prod' => (int) $item['id_prod'],
-                        'cantidad' => max(0, (int) $item['cantidad']),
-                    ];
-                }
+            $items = array_map(static function (array $item): array {
+                return [
+                    'id_prod' => (int) $item['id_prod'],
+                    'cantidad' => (int) $item['cantidad'],
+                    'precio_unitario' => (float) $item['precio'],
+                ];
+            }, array_values($carrito));
+
+            try {
+                lm_registrar_venta((int) $usuario['id_cli'], $idSuc, $items);
+                $carrito = [];
+                $mensaje = 'Compra procesada con transacción ACID real.';
+                $tipoMsg = 'success';
+            } catch (Throwable $e) {
+                $mensaje = $e->getMessage();
+                $tipoMsg = 'danger';
             }
-
-            $ventas[] = [
-                'id_venta' => lm_siguiente_id($ventas, 'id_venta'),
-                'cliente' => $usuario['cliente'],
-                'sucursal' => $sucursal['sucursal'],
-                'total' => array_sum(array_column($carrito, 'subtotal')),
-                'estado' => 'pagado',
-                'fecha' => date('Y-m-d H:i'),
-                'detalle' => array_values($carrito),
-            ];
-
-            $carrito = [];
-            $mensaje = 'Compra procesada. La vista queda lista para conectar ventas reales.';
-            $tipoMsg = 'success';
         }
     }
 }
@@ -126,7 +100,7 @@ $productosVisibles = array_values(array_filter($productos, function ($producto) 
 $totalProductos = count($productos);
 $itemsCarrito = array_sum(array_column($carrito, 'cantidad'));
 $totalCarrito = array_sum(array_column($carrito, 'subtotal'));
-$ventasRecientes = array_slice(array_reverse($ventas), 0, 4);
+$ventasRecientes = array_slice(array_reverse(array_values($ventas)), 0, 4);
 ?>
 
 <div class="lm-page">
@@ -217,8 +191,9 @@ $ventasRecientes = array_slice(array_reverse($ventas), 0, 4);
                                         <td>$<?= number_format((float) $producto['precio'], 0, ',', '.') ?></td>
                                         <td class="text-muted"><?= htmlspecialchars($producto['descripcion']) ?></td>
                                         <td>
-                                            <span class="lm-badge <?= lm_stock_total_producto($stock, (int) $producto['id_prod']) > 0 ? 'badge-activo' : 'badge-inactivo' ?>">
-                                                <?= lm_stock_total_producto($stock, (int) $producto['id_prod']) ?> uds
+                                            <?php $stockTotal = array_sum(array_map(static fn($item) => (int) $item['cantidad'], array_filter($stock, static fn($item) => (int) $item['id_prod'] === (int) $producto['id_prod']))); ?>
+                                            <span class="lm-badge <?= $stockTotal > 0 ? 'badge-activo' : 'badge-inactivo' ?>">
+                                                <?= $stockTotal ?> uds
                                             </span>
                                         </td>
                                         <td>

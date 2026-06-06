@@ -1,4 +1,14 @@
 <?php
+require_once 'includes/auth.php';
+
+if (isset($_GET['caer'])) {
+    lm_simular_caida_nodo((string) $_GET['caer'], true);
+}
+
+if (isset($_GET['restaurar'])) {
+    lm_restaurar_nodo((string) $_GET['restaurar']);
+}
+
 require_once 'includes/header.php';
 
 /**
@@ -8,29 +18,30 @@ require_once 'includes/header.php';
  */
 
 // Estado actualizado
+$estadoNodos = estadoNodos();
 $nodos = [
     'principal' => [
-        'nombre'      => 'Nodo Principal',
+        'nombre'      => 'Nodo Central',
         'descripcion' => 'Ventas, Clientes, Productos',
         'host'        => DB_HOST_PRINCIPAL . ':' . DB_PORT_PRINCIPAL,
         'db'          => DB_NAME_PRINCIPAL,
-        'estado'      => $estadoNodos['principal'],
+        'estado'      => $estadoNodos['central'],
         'icono'       => 'bi-server',
     ],
     'sucursales' => [
-        'nombre'      => 'Nodo Sucursales',
-        'descripcion' => 'Stock, Inventario, Sucursales',
+        'nombre'      => 'Sucursal La Serena',
+        'descripcion' => 'Stock, Inventario y movimientos',
         'host'        => DB_HOST_SUCURSALES . ':' . DB_PORT_SUCURSALES,
         'db'          => DB_NAME_SUCURSALES,
-        'estado'      => $estadoNodos['sucursales'],
+        'estado'      => $estadoNodos['sucursal1'],
         'icono'       => 'bi-hdd-network',
     ],
     'proveedores' => [
-        'nombre'      => 'Nodo Proveedores',
-        'descripcion' => 'Compras, Proveedores, Reabastecimiento',
+        'nombre'      => 'Sucursal Coquimbo',
+        'descripcion' => 'Stock, Inventario y movimientos',
         'host'        => DB_HOST_PROVEEDORES . ':' . DB_PORT_PROVEEDORES,
         'db'          => DB_NAME_PROVEEDORES,
-        'estado'      => $estadoNodos['proveedores'],
+        'estado'      => $estadoNodos['sucursal2'],
         'icono'       => 'bi-cloud-arrow-up',
     ],
 ];
@@ -44,7 +55,12 @@ $nodos = [
             <h1>Monitor de <span>Nodos</span></h1>
             <p>Estado de la arquitectura distribuida &mdash; Teorema CAP</p>
         </div>
-        <a href="nodos.php" class="btn-lm-ghost btn"><i class="bi bi-arrow-clockwise me-1"></i>Actualizar</a>
+        <div class="d-flex gap-2 flex-wrap">
+            <a href="?caer=sucursal1" class="btn-lm-danger btn btn-sm"><i class="bi bi-wifi-off me-1"></i>Caer La Serena</a>
+            <a href="?caer=sucursal2" class="btn-lm-danger btn btn-sm"><i class="bi bi-wifi-off me-1"></i>Caer Coquimbo</a>
+            <a href="?restaurar=sucursal1" class="btn-lm-ghost btn btn-sm"><i class="bi bi-arrow-clockwise me-1"></i>Restaurar La Serena</a>
+            <a href="?restaurar=sucursal2" class="btn-lm-ghost btn btn-sm"><i class="bi bi-arrow-clockwise me-1"></i>Restaurar Coquimbo</a>
+        </div>
     </div>
 
     <!-- Estado nodos -->
@@ -111,8 +127,8 @@ $nodos = [
                         <i class="bi bi-lightning-charge me-2 text-warning"></i>Comportamiento ante partición de red
                     </h6>
                     <ul class="text-muted small" style="padding-left:1.2rem; line-height:2">
-                        <li>Si el nodo de <strong style="color:var(--lm-text)">sucursales</strong> falla → el sistema <strong style="color:var(--lm-danger)">rechaza nuevas ventas</strong> (no arriesga sobreventa).</li>
-                        <li>Si el nodo de <strong style="color:var(--lm-text)">proveedores</strong> falla → las compras quedan en cola; las ventas continúan con stock existente.</li>
+                        <li>Si el nodo de <strong style="color:var(--lm-text)">stock</strong> falla → el sistema <strong style="color:var(--lm-danger)">rechaza nuevas ventas</strong> (no arriesga sobreventa).</li>
+                        <li>Si el nodo de <strong style="color:var(--lm-text)">compras</strong> falla → las compras quedan en cola; las ventas continúan con stock existente.</li>
                         <li>El commit en 2 fases asegura que ninguna transacción queda a medias entre nodos.</li>
                         <li>Los clientes reciben un mensaje de <em>servicio temporalmente no disponible</em> en vez de datos incorrectos.</li>
                     </ul>
