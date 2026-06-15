@@ -1,4 +1,6 @@
 <?php
+require_once 'includes/auth.php';
+lm_requiere_roles(['admin', 'vendedor']);
 require_once 'includes/header.php';
 
 /**

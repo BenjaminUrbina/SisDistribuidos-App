@@ -154,7 +154,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'confi
 
 $productos  = lm_catalogo_productos(true);
 $clientes   = lm_clientes_listar(true);
-$sucursales = lm_sucursales_operativas();
+$sucursales = lm_sucursales_listar(true); // Listar todas para mostrar estado
 
 if ($usaDbCarrito) {
     $carritoDb = lm_carrito_activo((int) $usuario['id_cli']);
@@ -291,8 +291,12 @@ if ($usaDbCarrito) {
                                 <label class="lm-form-label">Sucursal</label>
                                 <select name="id_suc" class="lm-input form-select" required>
                                     <option value="">Seleccionar...</option>
-                                    <?php foreach ($sucursales as $s): ?>
-                                        <option value="<?= $s['id_suc'] ?>"><?= htmlspecialchars($s['sucursal']) ?></option>
+                                    <?php foreach ($sucursales as $s): 
+                                        $isOperative = lm_sucursal_operativa((int)$s['id_suc']);
+                                    ?>
+                                        <option value="<?= $s['id_suc'] ?>" <?= !$isOperative ? 'disabled' : '' ?>>
+                                            <?= htmlspecialchars($s['sucursal']) ?> <?= !$isOperative ? '(OFFLINE)' : '' ?>
+                                        </option>
                                     <?php endforeach; ?>
                                 </select>
                             </div>

@@ -15,6 +15,8 @@ services:
       MYSQL_DATABASE: libremercado_central
     ports:
       - "3307:3306"
+    volumes:
+      - lm_central_data:/var/lib/mysql
 
   mysql-sucursal1:
     image: mysql:8
@@ -23,6 +25,8 @@ services:
       MYSQL_DATABASE: libremercado_sucursal1
     ports:
       - "3308:3306"
+    volumes:
+      - lm_sucursal1_data:/var/lib/mysql
 
   mysql-sucursal2:
     image: mysql:8
@@ -31,3 +35,10 @@ services:
       MYSQL_DATABASE: libremercado_sucursal2
     ports:
       - "3309:3306"
+    volumes:
+      - lm_sucursal2_data:/var/lib/mysql
+
+volumes:
+  lm_central_data:
+  lm_sucursal1_data:
+  lm_sucursal2_data:

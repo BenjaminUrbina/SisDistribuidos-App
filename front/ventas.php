@@ -1,4 +1,9 @@
 <?php
+require_once 'includes/auth.php';
+if (!lm_esta_autenticado()) {
+    header('Location: login.php');
+    exit;
+}
 require_once 'includes/header.php';
 
 /**

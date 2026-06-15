@@ -1,5 +1,6 @@
 <?php
 require_once 'includes/auth.php';
+lm_requiere_roles(['admin']);
 
 if (isset($_GET['caer'])) {
     lm_simular_caida_nodo((string) $_GET['caer'], true);
@@ -56,10 +57,11 @@ $nodos = [
             <p>Estado de la arquitectura distribuida &mdash; Teorema CAP</p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
-            <a href="?caer=sucursal1" class="btn-lm-danger btn btn-sm"><i class="bi bi-wifi-off me-1"></i>Caer La Serena</a>
-            <a href="?caer=sucursal2" class="btn-lm-danger btn btn-sm"><i class="bi bi-wifi-off me-1"></i>Caer Coquimbo</a>
-            <a href="?restaurar=sucursal1" class="btn-lm-ghost btn btn-sm"><i class="bi bi-arrow-clockwise me-1"></i>Restaurar La Serena</a>
-            <a href="?restaurar=sucursal2" class="btn-lm-ghost btn btn-sm"><i class="bi bi-arrow-clockwise me-1"></i>Restaurar Coquimbo</a>
+            <a href="<?= lm_url('seeder.php') ?>" target="_blank" class="btn btn-lm-primary btn-sm"><i class="bi bi-database-add me-1"></i>Poblar Base de Datos</a>
+            <a href="<?= lm_url('?caer=sucursal1') ?>" class="btn-lm-danger btn btn-sm"><i class="bi bi-wifi-off me-1"></i>Caer La Serena</a>
+            <a href="<?= lm_url('?caer=sucursal2') ?>" class="btn-lm-danger btn btn-sm"><i class="bi bi-wifi-off me-1"></i>Caer Coquimbo</a>
+            <a href="<?= lm_url('?restaurar=sucursal1') ?>" class="btn-lm-ghost btn btn-sm"><i class="bi bi-arrow-clockwise me-1"></i>Restaurar La Serena</a>
+            <a href="<?= lm_url('?restaurar=sucursal2') ?>" class="btn-lm-ghost btn btn-sm"><i class="bi bi-arrow-clockwise me-1"></i>Restaurar Coquimbo</a>
         </div>
     </div>
 

@@ -1,7 +1,19 @@
 <?php
-// ─── includes ──────────────────────────────────────────────────────────
 require_once 'includes/header.php';
 
+$usuarioActual = lm_usuario_actual();
+$rolActual = $usuarioActual['rol'] ?? 'publico';
+
+// Redirección para usuarios logueados
+if ($rolActual === 'cliente') {
+    header('Location: ' . lm_url('cliente.php'));
+    exit;
+} elseif ($rolActual === 'vendedor') {
+    header('Location: ' . lm_url('vendedor.php'));
+    exit;
+}
+
+// Si es Administrador o Invitado
 $statsData = lm_dashboard_stats();
 $stats = [
     ['label' => 'Productos',   'value' => $statsData['productos'], 'icon' => 'bi-box-seam',    'bg' => 'bg-accent'],
@@ -11,43 +23,41 @@ $stats = [
 ];
 
 $ultimasVentas = lm_dashboard_ventas_recientes(5);
-$stockBajo     = lm_dashboard_stock_bajo();
 ?>
 
 <div class="lm-page">
 <div class="container-fluid">
 
-    <!-- ── Header ──────────────────────────────────────────────────────── -->
+    <?php if ($rolActual === 'publico'): ?>
+    <!-- Hero para Invitados -->
+    <div class="lm-card p-5 mb-4 text-center border-0 lm-fade-up" style="background: linear-gradient(135deg, var(--lm-surface) 0%, var(--lm-bg) 100%);">
+        <h1 class="display-4 fw-bold mb-3">Bienvenido a <span class="text-accent">Libre Mercado</span></h1>
+        <p class="lead text-muted mb-4 mx-auto" style="max-width: 700px;">
+            La primera plataforma de comercio electrónico distribuida con consistencia garantizada y 
+            transacciones ACID reales sobre múltiples nodos.
+        </p>
+        <div class="d-flex justify-content-center gap-3">
+            <a href="<?= lm_url('cliente.php') ?>" class="btn btn-lm-primary btn-lg px-5">Explorar Catálogo</a>
+            <a href="<?= lm_url('login.php') ?>" class="btn btn-outline-light btn-lg px-5">Iniciar Sesión</a>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Panel de Control (Visible para Admin o Resumen para Publico) -->
     <div class="lm-page-header lm-fade-up">
         <div>
-            <h1>Panel de <span>Control</span></h1>
-            <p>Resumen general del sistema distribuido &mdash; <?= date('d \d\e F, Y') ?></p>
+            <h1>Dashboard <span>Global</span></h1>
+            <p>Estado del sistema distribuido &mdash; <?= date('d \d\e F, Y') ?></p>
         </div>
         <div class="d-flex gap-2">
-            <a href="nodos.php" class="btn-lm-ghost btn"><i class="bi bi-diagram-3 me-1"></i>Ver nodos</a>
-            <a href="ventas.php" class="btn-lm-primary btn"><i class="bi bi-plus-lg me-1"></i>Nueva Venta</a>
+            <a href="nodos.php" class="btn-lm-ghost btn"><i class="bi bi-diagram-3 me-1"></i>Estado de Nodos</a>
+            <?php if ($rolActual === 'admin'): ?>
+                <a href="ventas.php" class="btn-lm-primary btn"><i class="bi bi-receipt me-1"></i>Ver Ventas</a>
+            <?php endif; ?>
         </div>
     </div>
 
-    <!-- ── Alert estado BD ─────────────────────────────────────────────── -->
-    <?php
-    $online  = count(array_filter($estadoNodos, fn($v) => $v === 'online'));
-    $total   = count($estadoNodos);
-    if ($online === 0): ?>
-        <div class="alert alert-danger alert-auto alert-dismissible fade show mb-4" role="alert">
-            <i class="bi bi-exclamation-triangle-fill me-2"></i>
-            <strong>Sin conexión a los nodos.</strong> Verifica la configuración en <code>includes/config.php</code>.
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-    <?php elseif ($online < $total): ?>
-        <div class="alert alert-warning alert-auto alert-dismissible fade show mb-4" role="alert">
-            <i class="bi bi-wifi-off me-2"></i>
-            <strong>Degradado:</strong> <?= $online ?>/<?= $total ?> nodos activos. Algunas funciones podrían no estar disponibles.
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-    <?php endif; ?>
-
-    <!-- ── Stat cards ──────────────────────────────────────────────────── -->
+    <!-- Stat cards -->
     <div class="row g-3 mb-4 lm-fade-up">
         <?php foreach ($stats as $s): ?>
         <div class="col-6 col-lg-3">
@@ -60,15 +70,14 @@ $stockBajo     = lm_dashboard_stock_bajo();
         <?php endforeach; ?>
     </div>
 
-    <!-- ── Tablas ───────────────────────────────────────────────────────── -->
     <div class="row g-3">
-
-        <!-- Últimas ventas -->
-        <div class="col-lg-7">
+        <!-- Últimas ventas (Visible solo para Admin) -->
+        <?php if ($rolActual === 'admin'): ?>
+        <div class="col-lg-12">
             <div class="lm-card lm-fade-up">
                 <div class="lm-card-header">
-                    <i class="bi bi-receipt text-success"></i> Últimas Ventas
-                    <a href="ventas.php" class="btn-lm-ghost btn btn-sm ms-auto">Ver todas</a>
+                    <i class="bi bi-receipt text-success"></i> Monitor de Ventas Globales
+                    <a href="ventas.php" class="btn-lm-ghost btn btn-sm ms-auto">Ver historial completo</a>
                 </div>
                 <div class="table-responsive">
                     <table class="lm-table">
@@ -83,10 +92,7 @@ $stockBajo     = lm_dashboard_stock_bajo();
                         </thead>
                         <tbody>
                         <?php if (empty($ultimasVentas)): ?>
-                            <tr><td colspan="5" class="text-center py-4 text-muted">
-                                <i class="bi bi-database-slash d-block fs-3 mb-2"></i>
-                                Sin datos — conecta la base de datos
-                            </td></tr>
+                            <tr><td colspan="5" class="text-center py-4 text-muted">Sin datos en la red central</td></tr>
                         <?php else: foreach ($ultimasVentas as $v): ?>
                             <tr>
                                 <td>#<?= $v['id_venta'] ?></td>
@@ -101,38 +107,38 @@ $stockBajo     = lm_dashboard_stock_bajo();
                 </div>
             </div>
         </div>
-
-        <!-- Stock bajo -->
-        <div class="col-lg-5">
-            <div class="lm-card lm-fade-up">
-                <div class="lm-card-header">
-                    <i class="bi bi-exclamation-circle text-warning"></i> Stock Crítico
-                    <a href="sucursales.php" class="btn-lm-ghost btn btn-sm ms-auto">Gestionar</a>
-                </div>
-                <div class="table-responsive">
-                    <table class="lm-table">
-                        <thead>
-                            <tr><th>Producto</th><th>Sucursal</th><th>Stock</th></tr>
-                        </thead>
-                        <tbody>
-                        <?php if (empty($stockBajo)): ?>
-                            <tr><td colspan="3" class="text-center py-4 text-muted">
-                                <i class="bi bi-database-slash d-block fs-3 mb-2"></i>
-                                Sin datos
-                            </td></tr>
-                        <?php else: foreach ($stockBajo as $s): ?>
-                            <tr>
-                                <td><?= htmlspecialchars($s['producto']) ?></td>
-                                <td><?= htmlspecialchars($s['sucursal']) ?></td>
-                                <td><span class="lm-badge badge-inactivo"><?= $s['cantidad'] ?></span></td>
-                            </tr>
-                        <?php endforeach; endif; ?>
-                        </tbody>
-                    </table>
+        <?php else: ?>
+        <!-- Info para invitados -->
+        <div class="col-lg-6">
+            <div class="lm-card h-100 lm-fade-up">
+                <div class="lm-card-header"><i class="bi bi-shield-check text-success"></i> Garantía ACID</div>
+                <div class="lm-card-body">
+                    <p class="small text-muted">
+                        Cada vez que compras, nuestro sistema coordina múltiples bases de datos para asegurar que el 
+                        descuento de stock y el registro de tu pago ocurran al mismo tiempo o no ocurran en absoluto.
+                    </p>
+                    <ul class="small text-muted">
+                        <li><strong>Atomicidad:</strong> O se completa todo, o no se hace nada.</li>
+                        <li><strong>Consistencia:</strong> Los datos siempre son válidos.</li>
+                        <li><strong>Aislamiento:</strong> Las ventas concurrentes no chocan.</li>
+                        <li><strong>Durabilidad:</strong> Tu compra está segura en disco.</li>
+                    </ul>
                 </div>
             </div>
         </div>
-
+        <div class="col-lg-6">
+            <div class="lm-card h-100 lm-fade-up">
+                <div class="lm-card-header"><i class="bi bi-diagram-3 text-warning"></i> Arquitectura CP</div>
+                <div class="lm-card-body">
+                    <p class="small text-muted">
+                        Preferimos la Consistencia sobre la Disponibilidad. Si un nodo de stock falla, el sistema 
+                        bloquea las ventas de ese producto para evitar sobreventa y mantener la integridad del negocio.
+                    </p>
+                    <a href="nodos.php" class="btn btn-lm-ghost btn-sm mt-2">Ver monitor de red</a>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
     </div>
 </div>
 </div>

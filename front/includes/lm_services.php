@@ -49,11 +49,21 @@ function lm_transaction_coordinator(array $nodes, callable $callback)
     $nodes = array_values(array_unique(array_filter(array_map([LmDatabase::class, 'canonicalNode'], $nodes))));
     $connections = [];
 
-    try {
-        foreach ($nodes as $node) {
-            $connections[$node] = lm_pdo($node);
+    // CP Principle: Check that ALL nodes are available before starting.
+    // If one is down, we prioritize Consistency over Availability.
+    foreach ($nodes as $node) {
+        if (LmDatabase::isSimulatedDown($node)) {
+            throw new RuntimeException("Nodo [{$node}] no disponible. Operación cancelada para mantener consistencia (CP).");
         }
+        
+        $pdo = lm_pdo($node);
+        if (!$pdo) {
+            throw new RuntimeException("Error de conexión al nodo [{$node}]. Abortando transacción distribuida.");
+        }
+        $connections[$node] = $pdo;
+    }
 
+    try {
         foreach ($connections as $pdo) {
             if (!$pdo->inTransaction()) {
                 $pdo->beginTransaction();
@@ -86,28 +96,18 @@ function lm_transaction_coordinator(array $nodes, callable $callback)
 
 function lm_catalogo_productos(bool $soloActivos = true): array
 {
-    try {
-        $sql = 'SELECT id_prod, producto, descripcion, precio, activo FROM productos';
-        if ($soloActivos) {
-            $sql .= ' WHERE activo = 1';
-        }
-
-        $sql .= ' ORDER BY id_prod DESC';
-        return lm_fetch_all('central', $sql);
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return [];
+    $sql = 'SELECT id_prod, producto, descripcion, precio, activo FROM productos';
+    if ($soloActivos) {
+        $sql .= ' WHERE activo = 1';
     }
+
+    $sql .= ' ORDER BY id_prod DESC';
+    return lm_fetch_all('central', $sql);
 }
 
 function lm_producto_por_id(int $idProd): ?array
 {
-    try {
-        return lm_fetch_one('central', 'SELECT id_prod, producto, descripcion, precio, activo FROM productos WHERE id_prod = ?', [$idProd]);
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return null;
-    }
+    return lm_fetch_one('central', 'SELECT id_prod, producto, descripcion, precio, activo FROM productos WHERE id_prod = ?', [$idProd]);
 }
 
 function lm_sync_stock_producto(int $idProd, string $nombre, ?float $precio = null): void
@@ -139,6 +139,16 @@ function lm_upsert_stock_producto_pdo(PDO $pdo, int $idProd, string $nombre): vo
 
 function lm_sucursal_operativa(int $idSuc): bool
 {
+    // Para ser CP (Consistente), una sucursal solo está "operativa" si su nodo de base de datos está ONLINE.
+    // Si el nodo está caído, sacrificamos Disponibilidad para mantener Consistencia.
+    $node = LmDatabase::stockNodeForSucursal($idSuc);
+    
+    // Primero verificamos si hay una caída simulada o real.
+    if (!LmDatabase::ping($node)) {
+        return false;
+    }
+
+    // Solo las sucursales 2 y 3 (La Serena y Coquimbo) tienen stock distribuido en esta arquitectura.
     return in_array($idSuc, [2, 3], true);
 }
 
@@ -229,29 +239,19 @@ function lm_desactivar_producto(int $idProd): void
 
 function lm_clientes_listar(bool $soloActivos = true): array
 {
-    try {
-        $sql = 'SELECT c.id_cli, c.cliente, c.rut, c.email, c.telefono, c.direccion, c.activo, COALESCE(u.rol, "cliente") AS rol'
-             . ' FROM clientes c'
-             . ' LEFT JOIN usuarios u ON u.email = c.email';
-        if ($soloActivos) {
-            $sql .= ' WHERE c.activo = 1';
-        }
-
-        return lm_fetch_all('central', $sql . ' ORDER BY c.id_cli DESC');
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return [];
+    $sql = 'SELECT c.id_cli, c.cliente, c.rut, c.email, c.telefono, c.direccion, c.activo, COALESCE(u.rol, "cliente") AS rol'
+         . ' FROM clientes c'
+         . ' LEFT JOIN usuarios u ON u.email = c.email';
+    if ($soloActivos) {
+        $sql .= ' WHERE c.activo = 1';
     }
+
+    return lm_fetch_all('central', $sql . ' ORDER BY c.id_cli DESC');
 }
 
 function lm_cliente_por_id(int $idCli): ?array
 {
-    try {
-        return lm_fetch_one('central', 'SELECT id_cli, cliente, rut, email, telefono, direccion, activo FROM clientes WHERE id_cli = ?', [$idCli]);
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return null;
-    }
+    return lm_fetch_one('central', 'SELECT id_cli, cliente, rut, email, telefono, direccion, activo FROM clientes WHERE id_cli = ?', [$idCli]);
 }
 
 function lm_guardar_cliente(array $data): int
@@ -316,27 +316,17 @@ function lm_desactivar_cliente(int $idCli): void
 
 function lm_usuarios_listar(bool $soloActivos = true): array
 {
-    try {
-        $sql = 'SELECT id_usuario, nombre, email, rol, activo FROM usuarios';
-        if ($soloActivos) {
-            $sql .= ' WHERE activo = 1';
-        }
-
-        return lm_fetch_all('central', $sql . ' ORDER BY id_usuario DESC');
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return [];
+    $sql = 'SELECT id_usuario, nombre, email, rol, activo FROM usuarios';
+    if ($soloActivos) {
+        $sql .= ' WHERE activo = 1';
     }
+
+    return lm_fetch_all('central', $sql . ' ORDER BY id_usuario DESC');
 }
 
 function lm_usuario_por_email(string $email): ?array
 {
-    try {
-        return lm_fetch_one('central', 'SELECT id_usuario, nombre, email, password, rol, activo FROM usuarios WHERE email = ? LIMIT 1', [$email]);
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return null;
-    }
+    return lm_fetch_one('central', 'SELECT id_usuario, nombre, email, password, rol, activo FROM usuarios WHERE email = ? LIMIT 1', [$email]);
 }
 
 function lm_guardar_usuario(array $data, ?PDO $pdo = null): int
@@ -378,17 +368,12 @@ function lm_desactivar_usuario(int $idUsuario): void
 
 function lm_sucursales_listar(bool $soloActivas = true): array
 {
-    try {
-        $sql = 'SELECT id_suc, sucursal, direccion, activo FROM sucursales';
-        if ($soloActivas) {
-            $sql .= ' WHERE activo = 1';
-        }
-
-        return lm_fetch_all('central', $sql . ' ORDER BY id_suc ASC');
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return [];
+    $sql = 'SELECT id_suc, sucursal, direccion, activo FROM sucursales';
+    if ($soloActivas) {
+        $sql .= ' WHERE activo = 1';
     }
+
+    return lm_fetch_all('central', $sql . ' ORDER BY id_suc ASC');
 }
 
 function lm_sucursales_operativas(): array
@@ -398,12 +383,7 @@ function lm_sucursales_operativas(): array
 
 function lm_sucursal_por_id(int $idSuc): ?array
 {
-    try {
-        return lm_fetch_one('central', 'SELECT id_suc, sucursal, direccion, activo FROM sucursales WHERE id_suc = ?', [$idSuc]);
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return null;
-    }
+    return lm_fetch_one('central', 'SELECT id_suc, sucursal, direccion, activo FROM sucursales WHERE id_suc = ?', [$idSuc]);
 }
 
 function lm_guardar_sucursal(array $data): int
@@ -435,27 +415,17 @@ function lm_desactivar_sucursal(int $idSuc): void
 
 function lm_proveedores_listar(bool $soloActivos = true): array
 {
-    try {
-        $sql = 'SELECT id_proveedor, proveedor, email, telefono AS contacto, direccion, activo FROM proveedores';
-        if ($soloActivos) {
-            $sql .= ' WHERE activo = 1';
-        }
-
-        return lm_fetch_all('central', $sql . ' ORDER BY id_proveedor DESC');
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return [];
+    $sql = 'SELECT id_proveedor, proveedor, email, telefono AS contacto, direccion, activo FROM proveedores';
+    if ($soloActivos) {
+        $sql .= ' WHERE activo = 1';
     }
+
+    return lm_fetch_all('central', $sql . ' ORDER BY id_proveedor DESC');
 }
 
 function lm_proveedor_por_id(int $idProveedor): ?array
 {
-    try {
-        return lm_fetch_one('central', 'SELECT id_proveedor, proveedor, email, telefono AS contacto, direccion, activo FROM proveedores WHERE id_proveedor = ?', [$idProveedor]);
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return null;
-    }
+    return lm_fetch_one('central', 'SELECT id_proveedor, proveedor, email, telefono AS contacto, direccion, activo FROM proveedores WHERE id_proveedor = ?', [$idProveedor]);
 }
 
 function lm_guardar_proveedor(array $data): int
@@ -522,29 +492,24 @@ function lm_stock_todos(): array
 
 function lm_stock_por_nodo(string $node): array
 {
-    try {
-        if (!in_array($node, ['sucursal1', 'sucursal2'], true)) {
-            return [];
-        }
-
-        $rows = lm_fetch_all($node, 'SELECT id_stock, id_prod, producto, cantidad, stock_minimo, actualizado_en FROM stock ORDER BY id_stock ASC');
-        $resultados = [];
-
-        foreach ($rows as $row) {
-            $producto = lm_producto_por_id((int) $row['id_prod']);
-            if (!$producto || (int) ($producto['activo'] ?? 0) !== 1) {
-                continue;
-            }
-
-            $row['producto'] = $producto['producto'];
-            $resultados[] = $row;
-        }
-
-        return $resultados;
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
+    if (!in_array($node, ['sucursal1', 'sucursal2'], true)) {
         return [];
     }
+
+    $rows = lm_fetch_all($node, 'SELECT id_stock, id_prod, producto, cantidad, stock_minimo, actualizado_en FROM stock ORDER BY id_stock ASC');
+    $resultados = [];
+
+    foreach ($rows as $row) {
+        $producto = lm_producto_por_id((int) $row['id_prod']);
+        if (!$producto || (int) ($producto['activo'] ?? 0) !== 1) {
+            continue;
+        }
+
+        $row['producto'] = $producto['producto'];
+        $resultados[] = $row;
+    }
+
+    return $resultados;
 }
 
 function lm_stock_actualizar(int $idSuc, int $idProd, int $cantidad, string $motivo = 'Ajuste manual'): void
@@ -678,42 +643,22 @@ function lm_carrito_vaciar(int $idCli): void
 
 function lm_venta_por_id(int $idVenta): ?array
 {
-    try {
-        return lm_fetch_one('central', 'SELECT v.id_venta, v.id_cli, v.id_suc, v.fecha_venta, v.total, v.estado, c.cliente, s.sucursal FROM ventas v INNER JOIN clientes c ON c.id_cli = v.id_cli INNER JOIN sucursales s ON s.id_suc = v.id_suc WHERE v.id_venta = ?', [$idVenta]);
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return null;
-    }
+    return lm_fetch_one('central', 'SELECT v.id_venta, v.id_cli, v.id_suc, v.fecha_venta, v.total, v.estado, c.cliente, s.sucursal FROM ventas v INNER JOIN clientes c ON c.id_cli = v.id_cli INNER JOIN sucursales s ON s.id_suc = v.id_suc WHERE v.id_venta = ?', [$idVenta]);
 }
 
 function lm_venta_detalle(int $idVenta): array
 {
-    try {
-        return lm_fetch_all('central', 'SELECT dv.id_detalle_venta, dv.id_prod, p.producto, dv.cantidad, dv.precio_unitario, dv.subtotal FROM detalle_ventas dv INNER JOIN productos p ON p.id_prod = dv.id_prod WHERE dv.id_venta = ? ORDER BY dv.id_detalle_venta ASC', [$idVenta]);
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return [];
-    }
+    return lm_fetch_all('central', 'SELECT dv.id_detalle_venta, dv.id_prod, p.producto, dv.cantidad, dv.precio_unitario, dv.subtotal FROM detalle_ventas dv INNER JOIN productos p ON p.id_prod = dv.id_prod WHERE dv.id_venta = ? ORDER BY dv.id_detalle_venta ASC', [$idVenta]);
 }
 
 function lm_ventas_listar(): array
 {
-    try {
-        return lm_fetch_all('central', 'SELECT v.id_venta, c.cliente, s.sucursal, v.total, v.fecha_venta AS fecha, v.estado FROM ventas v INNER JOIN clientes c ON c.id_cli = v.id_cli INNER JOIN sucursales s ON s.id_suc = v.id_suc ORDER BY v.fecha_venta DESC');
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return [];
-    }
+    return lm_fetch_all('central', 'SELECT v.id_venta, c.cliente, s.sucursal, v.total, v.fecha_venta AS fecha, v.estado FROM ventas v INNER JOIN clientes c ON c.id_cli = v.id_cli INNER JOIN sucursales s ON s.id_suc = v.id_suc ORDER BY v.fecha_venta DESC');
 }
 
 function lm_ventas_listar_por_cliente(int $idCli): array
 {
-    try {
-        return lm_fetch_all('central', 'SELECT v.id_venta, c.cliente, s.sucursal, v.total, v.fecha_venta AS fecha, v.estado FROM ventas v INNER JOIN clientes c ON c.id_cli = v.id_cli INNER JOIN sucursales s ON s.id_suc = v.id_suc WHERE v.id_cli = ? ORDER BY v.fecha_venta DESC', [$idCli]);
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return [];
-    }
+    return lm_fetch_all('central', 'SELECT v.id_venta, c.cliente, s.sucursal, v.total, v.fecha_venta AS fecha, v.estado FROM ventas v INNER JOIN clientes c ON c.id_cli = v.id_cli INNER JOIN sucursales s ON s.id_suc = v.id_suc WHERE v.id_cli = ? ORDER BY v.fecha_venta DESC', [$idCli]);
 }
 
 function lm_registrar_venta(int $idCli, int $idSuc, array $items, ?int $idCarrito = null): array
@@ -723,7 +668,7 @@ function lm_registrar_venta(int $idCli, int $idSuc, array $items, ?int $idCarrit
     }
 
     if (!lm_sucursal_operativa($idSuc)) {
-        throw new RuntimeException('La sede central no puede registrar ventas operativas.');
+        throw new RuntimeException('La sucursal seleccionada no está disponible o su nodo de stock está fuera de línea (Arquitectura CP).');
     }
 
     $productoIds = [];
@@ -851,73 +796,51 @@ function lm_registrar_compra(int $idProveedor, int $idSuc, int $idProd, int $can
 
 function lm_compras_listar(): array
 {
-    try {
-        return lm_fetch_all(
-            'central',
-            'SELECT c.id_compra, p.proveedor, COALESCE(GROUP_CONCAT(DISTINCT pr.producto ORDER BY pr.producto SEPARATOR ", "), "Sin producto") AS producto, SUM(dc.cantidad) AS cantidad, s.sucursal, c.total, c.fecha_compra AS fecha '
-            . 'FROM compras c '
-            . 'INNER JOIN proveedores p ON p.id_proveedor = c.id_proveedor '
-            . 'INNER JOIN sucursales s ON s.id_suc = c.id_suc '
-            . 'LEFT JOIN detalle_compras dc ON dc.id_compra = c.id_compra '
-            . 'LEFT JOIN productos pr ON pr.id_prod = dc.id_prod '
-            . 'GROUP BY c.id_compra, p.proveedor, s.sucursal, c.total, c.fecha_compra '
-            . 'ORDER BY c.fecha_compra DESC'
-        );
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return [];
-    }
+    return lm_fetch_all(
+        'central',
+        'SELECT c.id_compra, p.proveedor, COALESCE(GROUP_CONCAT(DISTINCT pr.producto ORDER BY pr.producto SEPARATOR ", "), "Sin producto") AS producto, SUM(dc.cantidad) AS cantidad, s.sucursal, c.total, c.fecha_compra AS fecha '
+        . 'FROM compras c '
+        . 'INNER JOIN proveedores p ON p.id_proveedor = c.id_proveedor '
+        . 'INNER JOIN sucursales s ON s.id_suc = c.id_suc '
+        . 'LEFT JOIN detalle_compras dc ON dc.id_compra = c.id_compra '
+        . 'LEFT JOIN productos pr ON pr.id_prod = dc.id_prod '
+        . 'GROUP BY c.id_compra, p.proveedor, s.sucursal, c.total, c.fecha_compra '
+        . 'ORDER BY c.fecha_compra DESC'
+    );
 }
 
 function lm_compra_detalle(int $idCompra): array
 {
-    try {
-        return lm_fetch_all('central', 'SELECT dc.id_detalle_compra, dc.id_prod, p.producto, dc.cantidad, dc.precio_unitario, dc.subtotal FROM detalle_compras dc INNER JOIN productos p ON p.id_prod = dc.id_prod WHERE dc.id_compra = ? ORDER BY dc.id_detalle_compra ASC', [$idCompra]);
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return [];
-    }
+    return lm_fetch_all('central', 'SELECT dc.id_detalle_compra, dc.id_prod, p.producto, dc.cantidad, dc.precio_unitario, dc.subtotal FROM detalle_compras dc INNER JOIN productos p ON p.id_prod = dc.id_prod WHERE dc.id_compra = ? ORDER BY dc.id_detalle_compra ASC', [$idCompra]);
 }
 
 function lm_dashboard_stats(): array
 {
-    try {
-        $hoy = date('Y-m-d');
-        $productos = lm_fetch_one('central', 'SELECT COUNT(*) AS total FROM productos WHERE activo = 1');
-        $clientes = lm_fetch_one('central', 'SELECT COUNT(*) AS total FROM clientes WHERE activo = 1');
-        $ventasHoy = lm_fetch_one('central', 'SELECT COUNT(*) AS total FROM ventas WHERE DATE(fecha_venta) = ?', [$hoy]);
-        $sucursales = lm_fetch_one('central', 'SELECT COUNT(*) AS total FROM sucursales WHERE activo = 1');
+    $hoy = date('Y-m-d');
+    $productos = lm_fetch_one('central', 'SELECT COUNT(*) AS total FROM productos WHERE activo = 1');
+    $clientes = lm_fetch_one('central', 'SELECT COUNT(*) AS total FROM clientes WHERE activo = 1');
+    $ventasHoy = lm_fetch_one('central', 'SELECT COUNT(*) AS total FROM ventas WHERE DATE(fecha_venta) = ?', [$hoy]);
+    
+    // Contar solo sucursales operativas (nodos ONLINE)
+    $sucursalesOperativas = lm_sucursales_operativas();
+    $totalSucursales = count($sucursalesOperativas);
 
-        return [
-            'productos' => (int) ($productos['total'] ?? 0),
-            'clientes' => (int) ($clientes['total'] ?? 0),
-            'ventas_hoy' => (int) ($ventasHoy['total'] ?? 0),
-            'sucursales' => (int) ($sucursales['total'] ?? 0),
-        ];
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return ['productos' => 0, 'clientes' => 0, 'ventas_hoy' => 0, 'sucursales' => 0];
-    }
+    return [
+        'productos' => (int) ($productos['total'] ?? 0),
+        'clientes' => (int) ($clientes['total'] ?? 0),
+        'ventas_hoy' => (int) ($ventasHoy['total'] ?? 0),
+        'sucursales' => $totalSucursales,
+    ];
 }
 
 function lm_dashboard_ventas_recientes(int $limite = 5): array
 {
-    try {
-        $limite = max(1, $limite);
-        return lm_fetch_all('central', 'SELECT v.id_venta, c.cliente, s.sucursal, v.total, v.estado, v.fecha_venta AS fecha FROM ventas v INNER JOIN clientes c ON c.id_cli = v.id_cli INNER JOIN sucursales s ON s.id_suc = v.id_suc ORDER BY v.fecha_venta DESC LIMIT ' . $limite);
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return [];
-    }
+    $limite = max(1, $limite);
+    return lm_fetch_all('central', 'SELECT v.id_venta, c.cliente, s.sucursal, v.total, v.estado, v.fecha_venta AS fecha FROM ventas v INNER JOIN clientes c ON c.id_cli = v.id_cli INNER JOIN sucursales s ON s.id_suc = v.id_suc ORDER BY v.fecha_venta DESC LIMIT ' . $limite);
 }
 
 function lm_dashboard_stock_bajo(): array
 {
-    try {
-        $rows = lm_stock_todos();
-        return array_values(array_filter($rows, static fn (array $row): bool => (int) $row['cantidad'] <= (int) $row['stock_minimo']));
-    } catch (Throwable $e) {
-        error_log($e->getMessage());
-        return [];
-    }
+    $rows = lm_stock_todos();
+    return array_values(array_filter($rows, static fn (array $row): bool => (int) $row['cantidad'] <= (int) $row['stock_minimo']));
 }

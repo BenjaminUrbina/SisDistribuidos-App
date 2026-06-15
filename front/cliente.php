@@ -1,29 +1,24 @@
 <?php
 require_once 'includes/auth.php';
-lm_requiere_roles(['cliente']);
-require_once 'includes/header.php';
 
-$usuario = lm_usuario_actual() ?? ['cliente' => 'Cliente', 'rol' => 'cliente'];
+$usuario = lm_usuario_actual();
+$isGuest = !$usuario;
 $mensaje = '';
 $tipoMsg = 'info';
 
-$productos = lm_catalogo_productos(true);
-$sucursales = lm_sucursales_operativas();
-$stock = lm_stock_todos();
-
-if (!isset($_SESSION['carrito_cliente'])) {
-    $_SESSION['carrito_cliente'] = [];
-}
-$carrito =& $_SESSION['carrito_cliente'];
-$ventas = !empty($usuario['id_cli']) ? lm_ventas_listar_por_cliente((int) $usuario['id_cli']) : [];
-
+// Manejo de acciones POST (Antes de cualquier salida HTML)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $accion = $_POST['accion'] ?? '';
+
+    if (!isset($_SESSION['carrito_cliente'])) {
+        $_SESSION['carrito_cliente'] = [];
+    }
+    $carrito =& $_SESSION['carrito_cliente'];
 
     if ($accion === 'agregar_carrito') {
         $idProd = (int) ($_POST['id_prod'] ?? 0);
         $cantidad = max(1, (int) ($_POST['cantidad'] ?? 1));
-            $producto = lm_producto_por_id($idProd);
+        $producto = lm_producto_por_id($idProd);
 
         if ($producto) {
             if (!isset($carrito[$idProd])) {
@@ -35,14 +30,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'subtotal' => 0,
                 ];
             }
-
             $carrito[$idProd]['cantidad'] += $cantidad;
             $carrito[$idProd]['subtotal'] = $carrito[$idProd]['cantidad'] * $carrito[$idProd]['precio'];
             $mensaje = 'Producto agregado al carrito.';
             $tipoMsg = 'success';
-        } else {
-            $mensaje = 'El producto no existe.';
-            $tipoMsg = 'danger';
         }
     } elseif ($accion === 'eliminar_item') {
         $idProd = (int) ($_POST['id_prod'] ?? 0);
@@ -56,7 +47,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensaje = 'Carrito vaciado.';
         $tipoMsg = 'warning';
     } elseif ($accion === 'finalizar_compra') {
+        if ($isGuest) {
+            header('Location: ' . lm_url('login.php?msg=Debes iniciar sesión para comprar'));
+            exit;
+        }
+
         $idSuc = (int) ($_POST['id_suc'] ?? 0);
+        $sucursales = lm_sucursales_operativas();
         $sucursal = lm_indexar_por_id($sucursales, 'id_suc', $idSuc);
 
         if (!$carrito) {
@@ -87,12 +84,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// Ahora que procesamos el POST, podemos cargar el header
+require_once 'includes/header.php';
+
+$productos = lm_catalogo_productos(true);
+$sucursales = lm_sucursales_listar(true); // Listar todas para mostrar estado
+$stock = lm_stock_todos();
+
+if (!isset($_SESSION['carrito_cliente'])) {
+    $_SESSION['carrito_cliente'] = [];
+}
+$carrito =& $_SESSION['carrito_cliente'];
+$ventas = ($usuario && !empty($usuario['id_cli'])) ? lm_ventas_listar_por_cliente((int) $usuario['id_cli']) : [];
+
 $busqueda = trim($_GET['q'] ?? '');
 $productosVisibles = array_values(array_filter($productos, function ($producto) use ($busqueda) {
-    if ($busqueda === '') {
-        return true;
-    }
-
+    if ($busqueda === '') return true;
     $texto = strtolower(($producto['producto'] ?? '') . ' ' . ($producto['descripcion'] ?? ''));
     return str_contains($texto, strtolower($busqueda));
 }));
@@ -105,15 +112,31 @@ $ventasRecientes = array_slice(array_reverse(array_values($ventas)), 0, 4);
 
 <div class="lm-page">
     <div class="container-fluid">
+        
+        <?php if ($isGuest): ?>
+        <!-- Banner Invitado -->
+        <div class="alert alert-info border-0 shadow-sm mb-4 d-flex align-items-center justify-content-between p-3 lm-fade-up">
+            <div class="d-flex align-items-center gap-3">
+                <i class="bi bi-person-circle fs-3 text-primary"></i>
+                <div>
+                    <h6 class="mb-0 fw-bold">¡Bienvenido a Libre Mercado!</h6>
+                    <p class="small mb-0 text-muted">Puedes navegar y agregar productos al carrito, pero para comprar necesitas una cuenta.</p>
+                </div>
+            </div>
+            <a href="login.php" class="btn btn-primary btn-sm px-4 fw-bold">Ingresar / Registrarme</a>
+        </div>
+        <?php endif; ?>
+
         <div class="lm-page-header lm-fade-up">
             <div>
-                <h1>Vista de <span>Cliente</span></h1>
-                <p><?= htmlspecialchars($usuario['cliente']) ?> compra items y gestiona su carrito desde el catálogo.</p>
+                <h1>Catálogo de <span>Productos</span></h1>
+                <p>Explora nuestra selección distribuida en múltiples nodos.</p>
             </div>
+            <?php if (!$isGuest): ?>
             <div class="d-flex gap-2 flex-wrap">
                 <a href="ventas.php" class="btn-lm-ghost btn"><i class="bi bi-receipt me-1"></i>Mis compras</a>
-                <a href="logout.php" class="btn-lm-primary btn"><i class="bi bi-box-arrow-right me-1"></i>Salir</a>
             </div>
+            <?php endif; ?>
         </div>
 
         <?php if ($mensaje): ?>
@@ -158,58 +181,65 @@ $ventasRecientes = array_slice(array_reverse(array_values($ventas)), 0, 4);
             <div class="col-lg-8">
                 <div class="lm-card lm-fade-up">
                     <div class="lm-card-header">
-                        <i class="bi bi-boxes"></i> Catálogo de productos
+                        <i class="bi bi-boxes"></i> Catálogo actual
                         <form class="ms-auto" method="GET">
                             <div class="lm-search-wrap" style="width:260px">
                                 <i class="bi bi-search"></i>
                                 <input type="text" name="q" value="<?= htmlspecialchars($busqueda) ?>" class="lm-input form-control" placeholder="Buscar producto">
+                                <?php if (($sessionToken ?? 'DEFAULT') !== 'DEFAULT'): ?>
+                                    <input type="hidden" name="token" value="<?= htmlspecialchars($sessionToken) ?>">
+                                <?php endif; ?>
                             </div>
                         </form>
                     </div>
-                    <div class="table-responsive">
-                        <table class="lm-table" id="tablaClienteProductos">
-                            <thead>
-                                <tr>
-                                    <th>Producto</th>
-                                    <th>Precio</th>
-                                    <th>Descripcion</th>
-                                    <th>Stock</th>
-                                    <th>Agregar</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if (empty($productosVisibles)): ?>
-                                    <tr>
-                                        <td colspan="5" class="text-center py-5 text-muted">
-                                            <i class="bi bi-search d-block fs-2 mb-2"></i>
-                                            Sin resultados
-                                        </td>
-                                    </tr>
-                                <?php else: foreach ($productosVisibles as $producto): ?>
-                                    <tr>
-                                        <td><strong><?= htmlspecialchars($producto['producto']) ?></strong></td>
-                                        <td>$<?= number_format((float) $producto['precio'], 0, ',', '.') ?></td>
-                                        <td class="text-muted"><?= htmlspecialchars($producto['descripcion']) ?></td>
-                                        <td>
-                                            <?php $stockTotal = array_sum(array_map(static fn($item) => (int) $item['cantidad'], array_filter($stock, static fn($item) => (int) $item['id_prod'] === (int) $producto['id_prod']))); ?>
-                                            <span class="lm-badge <?= $stockTotal > 0 ? 'badge-activo' : 'badge-inactivo' ?>">
-                                                <?= $stockTotal ?> uds
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <form method="POST" class="d-flex align-items-center gap-2">
-                                                <input type="hidden" name="accion" value="agregar_carrito">
-                                                <input type="hidden" name="id_prod" value="<?= (int) $producto['id_prod'] ?>">
-                                                <input type="number" name="cantidad" class="lm-input form-control" min="1" value="1" style="max-width:86px">
-                                                <button type="submit" class="btn-lm-primary btn btn-sm">
-                                                    <i class="bi bi-cart-plus"></i>
-                                                </button>
-                                            </form>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; endif; ?>
-                            </tbody>
-                        </table>
+                    <div class="lm-card-body p-4">
+                        <div class="row g-4" id="catalogoProductos">
+                            <?php if (empty($productosVisibles)): ?>
+                                <div class="col-12 text-center py-5 text-muted">
+                                    <i class="bi bi-search d-block fs-2 mb-2"></i>
+                                    Sin resultados para "<?= htmlspecialchars($busqueda) ?>"
+                                </div>
+                            <?php else: foreach ($productosVisibles as $producto): ?>
+                                <div class="col-md-6 col-xl-4">
+                                    <div class="lm-product-card h-100">
+                                        <div class="lm-product-img">
+                                            <i class="bi bi-box-seam"></i>
+                                        </div>
+                                        <div class="lm-product-body">
+                                            <div class="lm-product-price">$<?= number_format((float) $producto['precio'], 0, ',', '.') ?></div>
+                                            <h3 class="lm-product-title"><?= htmlspecialchars($producto['producto']) ?></h3>
+                                            <p class="lm-product-desc"><?= htmlspecialchars($producto['descripcion']) ?></p>
+
+                                            <?php
+                                                $stockTotal = 0;
+                                                foreach ($stock as $sItem) {
+                                                    if ((int)$sItem['id_prod'] === (int)$producto['id_prod']) {
+                                                        // Solo sumar stock si el nodo está ONLINE (real o simulado)
+                                                        if (LmDatabase::ping($sItem['nodo'])) {
+                                                            $stockTotal += (int)$sItem['cantidad'];
+                                                        }
+                                                    }
+                                                }
+                                            ?>
+                                            <div class="d-flex align-items-center justify-content-between mt-auto pt-3">
+                                                <span class="lm-badge <?= $stockTotal > 0 ? 'badge-activo' : 'badge-inactivo' ?>">
+                                                    <?= $stockTotal > 0 ? $stockTotal . ' disponibles' : 'Sin stock/Nodo OFF' ?>
+                                                </span>
+
+                                                <form method="POST" class="d-flex align-items-center gap-1">
+                                                    <input type="hidden" name="accion" value="agregar_carrito">
+                                                    <input type="hidden" name="id_prod" value="<?= (int) $producto['id_prod'] ?>">
+                                                    <input type="number" name="cantidad" class="lm-input form-control form-control-sm" min="1" value="1" style="width:60px">
+                                                    <button type="submit" class="btn-lm-primary btn btn-sm" <?= $stockTotal <= 0 ? 'disabled' : '' ?>>
+                                                        <i class="bi bi-cart-plus"></i>
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach; endif; ?>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -254,10 +284,25 @@ $ventasRecientes = array_slice(array_reverse(array_values($ventas)), 0, 4);
                                         <label class="lm-form-label">Sucursal de retiro</label>
                                         <select name="id_suc" class="lm-input form-select" required>
                                             <option value="">Seleccionar...</option>
-                                            <?php foreach ($sucursales as $sucursal): ?>
-                                                <option value="<?= (int) $sucursal['id_suc'] ?>"><?= htmlspecialchars($sucursal['sucursal']) ?></option>
+                                            <?php foreach ($sucursales as $sucursal): 
+                                                $isOperative = lm_sucursal_operativa((int)$sucursal['id_suc']);
+                                            ?>
+                                                <option value="<?= (int) $sucursal['id_suc'] ?>" <?= !$isOperative ? 'disabled' : '' ?>>
+                                                    <?= htmlspecialchars($sucursal['sucursal']) ?> <?= !$isOperative ? '(FUERA DE LÍNEA)' : '' ?>
+                                                </option>
                                             <?php endforeach; ?>
                                         </select>
+                                        <?php 
+                                        $anyOperative = false;
+                                        foreach ($sucursales as $s) {
+                                            if (lm_sucursal_operativa((int)$s['id_suc'])) {
+                                                $anyOperative = true;
+                                                break;
+                                            }
+                                        }
+                                        if (!$anyOperative): ?>
+                                            <div class="text-danger small mt-1"><i class="bi bi-exclamation-triangle"></i> Ninguna sucursal disponible para retiro (Nodo de stock caído).</div>
+                                        <?php endif; ?>
                                     </div>
                                     <div class="d-flex gap-2">
                                         <button type="submit" class="btn-lm-primary btn flex-grow-1">
@@ -273,28 +318,26 @@ $ventasRecientes = array_slice(array_reverse(array_values($ventas)), 0, 4);
                     </div>
                 </div>
 
+                <?php if (!$isGuest && !empty($ventasRecientes)): ?>
                 <div class="lm-card lm-fade-up">
                     <div class="lm-card-header">
                         <i class="bi bi-clock-history"></i> Compras recientes
                     </div>
                     <div class="lm-card-body">
-                        <?php if (empty($ventasRecientes)): ?>
-                            <div class="text-muted text-center py-3">Sin historial</div>
-                        <?php else: ?>
-                            <div class="d-grid gap-2">
-                                <?php foreach ($ventasRecientes as $venta): ?>
-                                    <div class="p-2 rounded-3" style="background: var(--lm-surface2); border: 1px solid var(--lm-border);">
-                                        <div class="d-flex justify-content-between">
-                                            <strong>#<?= (int) $venta['id_venta'] ?></strong>
-                                            <span class="lm-badge badge-pagado">$<?= number_format((float) $venta['total'], 0, ',', '.') ?></span>
-                                        </div>
-                                        <div class="small text-muted mt-1"><?= htmlspecialchars($venta['sucursal']) ?> - <?= htmlspecialchars($venta['fecha']) ?></div>
+                        <div class="d-grid gap-2">
+                            <?php foreach ($ventasRecientes as $venta): ?>
+                                <div class="p-2 rounded-3" style="background: var(--lm-surface2); border: 1px solid var(--lm-border);">
+                                    <div class="d-flex justify-content-between">
+                                        <strong>#<?= (int) $venta['id_venta'] ?></strong>
+                                        <span class="lm-badge badge-pagado">$<?= number_format((float) $venta['total'], 0, ',', '.') ?></span>
                                     </div>
-                                <?php endforeach; ?>
-                            </div>
-                        <?php endif; ?>
+                                    <div class="small text-muted mt-1"><?= htmlspecialchars($venta['sucursal']) ?> - <?= htmlspecialchars($venta['fecha']) ?></div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
                     </div>
                 </div>
+                <?php endif; ?>
             </div>
         </div>
     </div>

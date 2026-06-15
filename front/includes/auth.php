@@ -18,6 +18,13 @@ function lm_usuarios_demo(): array {
             'password' => 'vendedor123',
             'rol' => 'vendedor',
         ],
+        [
+            'id_cli' => 0,
+            'cliente' => 'Admin Sistema',
+            'email' => 'admin@demo.local',
+            'password' => 'admin123',
+            'rol' => 'admin',
+        ],
     ];
 }
 
@@ -78,13 +85,13 @@ function lm_autenticar_bd(string $email, string $password): ?array
 
 function lm_requiere_roles(array $roles): void {
     if (!lm_esta_autenticado()) {
-        header('Location: login.php');
+        header('Location: ' . lm_url('login.php'));
         exit;
     }
 
     $usuario = lm_usuario_actual();
     if (!$usuario || !in_array($usuario['rol'], $roles, true)) {
-        header('Location: ' . lm_ruta_por_rol($usuario['rol'] ?? ''));
+        header('Location: ' . lm_url(lm_ruta_por_rol($usuario['rol'] ?? '')));
         exit;
     }
 }

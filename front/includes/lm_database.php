@@ -59,32 +59,40 @@ final class LmDatabase
     public static function isSimulatedDown(string $node): bool
     {
         $key = self::canonicalNode($node);
-        return isset($_SESSION['lm_node_failures'][$key]) && $_SESSION['lm_node_failures'][$key] === true;
+        $file = sys_get_temp_dir() . "/lm_node_down_{$key}";
+        return file_exists($file);
     }
 
     public static function simulateNodeDown(string $node, bool $down = true): void
     {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
-        }
-
         $key = self::canonicalNode($node);
-        $_SESSION['lm_node_failures'][$key] = $down;
+        $file = sys_get_temp_dir() . "/lm_node_down_{$key}";
+        if ($down) {
+            file_put_contents($file, '1');
+        } else {
+            if (file_exists($file)) {
+                unlink($file);
+            }
+        }
     }
 
     public static function clearNodeSimulation(?string $node = null): void
     {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
-        }
-
         if ($node === null) {
-            unset($_SESSION['lm_node_failures']);
+            foreach (self::nodes() as $key => $cfg) {
+                $file = sys_get_temp_dir() . "/lm_node_down_{$key}";
+                if (file_exists($file)) {
+                    unlink($file);
+                }
+            }
             return;
         }
 
         $key = self::canonicalNode($node);
-        unset($_SESSION['lm_node_failures'][$key]);
+        $file = sys_get_temp_dir() . "/lm_node_down_{$key}";
+        if (file_exists($file)) {
+            unlink($file);
+        }
     }
 
     public static function connection(string $node): ?PDO
@@ -156,8 +164,11 @@ final class LmDatabase
 
         self::$schemaBootstrapped = true;
 
-        if (!self::columnExists($pdo, 'productos', 'activo')) {
-            $pdo->exec('ALTER TABLE productos ADD COLUMN activo TINYINT(1) NOT NULL DEFAULT 1');
+        // Solo intentar bootstrap si la tabla productos ya existe (si no, el seeder lo hará)
+        if (self::tableExists($pdo, 'productos')) {
+            if (!self::columnExists($pdo, 'productos', 'activo')) {
+                $pdo->exec('ALTER TABLE productos ADD COLUMN activo TINYINT(1) NOT NULL DEFAULT 1');
+            }
         }
 
         if (!self::tableExists($pdo, 'stock')) {
@@ -165,6 +176,8 @@ final class LmDatabase
                 'CREATE TABLE stock (
                     id_stock INT NOT NULL AUTO_INCREMENT,
                     id_prod INT NOT NULL,
+                    sucursal VARCHAR(100),
+                    id_suc INT NOT NULL,
                     producto VARCHAR(120) NOT NULL,
                     cantidad INT NOT NULL DEFAULT 0,
                     stock_minimo INT DEFAULT 5,
@@ -179,6 +192,7 @@ final class LmDatabase
                 'CREATE TABLE movimientos_stock (
                     id_movimiento INT NOT NULL AUTO_INCREMENT,
                     id_prod INT NOT NULL,
+                    id_suc INT NOT NULL,
                     tipo ENUM("entrada","salida","ajuste") NOT NULL,
                     cantidad INT NOT NULL,
                     motivo VARCHAR(200) DEFAULT NULL,

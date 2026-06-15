@@ -1,19 +1,50 @@
 <?php
 
+// --- Configuración de Sesión Multitab ---
+// Permitir múltiples sesiones en el mismo navegador usando un parámetro 'token' en la URL.
+// Si no hay token, usa la sesión por defecto.
+$sessionToken = $_GET['token'] ?? ($_POST['token'] ?? 'DEFAULT');
+session_name('LM_SESS_' . preg_replace('/[^a-zA-Z0-9]/', '', $sessionToken));
+
+// Configurar cookies para que expiren al cerrar el navegador
+session_set_cookie_params([
+    'lifetime' => 0, 
+    'path' => '/',
+    'domain' => '',
+    'secure' => false, // Cambiar a true si usas HTTPS
+    'httponly' => true,
+    'samesite' => 'Lax'
+]);
+
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-define('LM_DB_HOST_CENTRAL', getenv('LM_DB_HOST_CENTRAL') ?: (PHP_SAPI === 'cli' ? '127.0.0.1' : 'mysql-central'));
-define('LM_DB_PORT_CENTRAL', getenv('LM_DB_PORT_CENTRAL') ?: (PHP_SAPI === 'cli' ? '3307' : '3306'));
+/**
+ * Agrega el token de sesión actual a una URL para mantener el contexto multitab.
+ */
+function lm_url(string $url): string {
+    global $sessionToken;
+    if ($sessionToken === 'DEFAULT') return $url;
+    
+    $query = parse_url($url, PHP_URL_QUERY);
+    $sep = $query ? '&' : '?';
+    return $url . $sep . 'token=' . urlencode($sessionToken);
+}
+
+// Detectar si estamos en el entorno Docker de producción/desarrollo
+$isDocker = file_exists('/.dockerenv');
+
+define('LM_DB_HOST_CENTRAL', getenv('LM_DB_HOST_CENTRAL') ?: ($isDocker ? 'mysql-central' : '127.0.0.1'));
+define('LM_DB_PORT_CENTRAL', getenv('LM_DB_PORT_CENTRAL') ?: ($isDocker ? '3306' : '3307'));
 define('LM_DB_NAME_CENTRAL', getenv('LM_DB_NAME_CENTRAL') ?: 'libremercado_central');
 
-define('LM_DB_HOST_SUCURSAL1', getenv('LM_DB_HOST_SUCURSAL1') ?: (PHP_SAPI === 'cli' ? '127.0.0.1' : 'mysql-sucursal1'));
-define('LM_DB_PORT_SUCURSAL1', getenv('LM_DB_PORT_SUCURSAL1') ?: (PHP_SAPI === 'cli' ? '3308' : '3306'));
+define('LM_DB_HOST_SUCURSAL1', getenv('LM_DB_HOST_SUCURSAL1') ?: ($isDocker ? 'mysql-sucursal1' : '127.0.0.1'));
+define('LM_DB_PORT_SUCURSAL1', getenv('LM_DB_PORT_SUCURSAL1') ?: ($isDocker ? '3306' : '3308'));
 define('LM_DB_NAME_SUCURSAL1', getenv('LM_DB_NAME_SUCURSAL1') ?: 'libremercado_sucursal1');
 
-define('LM_DB_HOST_SUCURSAL2', getenv('LM_DB_HOST_SUCURSAL2') ?: (PHP_SAPI === 'cli' ? '127.0.0.1' : 'mysql-sucursal2'));
-define('LM_DB_PORT_SUCURSAL2', getenv('LM_DB_PORT_SUCURSAL2') ?: (PHP_SAPI === 'cli' ? '3309' : '3306'));
+define('LM_DB_HOST_SUCURSAL2', getenv('LM_DB_HOST_SUCURSAL2') ?: ($isDocker ? 'mysql-sucursal2' : '127.0.0.1'));
+define('LM_DB_PORT_SUCURSAL2', getenv('LM_DB_PORT_SUCURSAL2') ?: ($isDocker ? '3306' : '3309'));
 define('LM_DB_NAME_SUCURSAL2', getenv('LM_DB_NAME_SUCURSAL2') ?: 'libremercado_sucursal2');
 
 define('LM_DB_USER', getenv('LM_DB_USER') ?: 'root');
