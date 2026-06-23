@@ -7,6 +7,7 @@ services:
       - "8080:80"
     volumes:
       - ./front:/var/www/html
+      - ./docker/mysql:/docker/mysql
 
   mysql-central:
     image: mysql:8

@@ -124,17 +124,17 @@ function lm_sync_stock_producto(int $idProd, string $nombre, ?float $precio = nu
     }
 }
 
-function lm_upsert_stock_producto_pdo(PDO $pdo, int $idProd, string $nombre): void
+function lm_upsert_stock_producto_pdo(PDO $pdo, int $idProd, string $nombre, int $idSuc = 0): void
 {
-    $row = lm_fetch_one_pdo($pdo, 'SELECT id_stock FROM stock WHERE id_prod = ? LIMIT 1', [$idProd]);
+    $row = lm_fetch_one_pdo($pdo, 'SELECT id_stock FROM stock WHERE id_prod = ? AND id_suc = ? LIMIT 1', [$idProd, $idSuc]);
     if ($row) {
-        $stmt = $pdo->prepare('UPDATE stock SET producto = ? WHERE id_prod = ?');
-        $stmt->execute([$nombre, $idProd]);
+        $stmt = $pdo->prepare('UPDATE stock SET producto = ? WHERE id_stock = ?');
+        $stmt->execute([$nombre, $row['id_stock']]);
         return;
     }
 
-    $stmt = $pdo->prepare('INSERT INTO stock (id_prod, producto, cantidad, stock_minimo) VALUES (?, ?, 0, 5)');
-    $stmt->execute([$idProd, $nombre]);
+    $stmt = $pdo->prepare('INSERT INTO stock (id_prod, id_suc, producto, cantidad, stock_minimo) VALUES (?, ?, ?, 0, 5)');
+    $stmt->execute([$idProd, $idSuc, $nombre]);
 }
 
 function lm_sucursal_operativa(int $idSuc): bool
@@ -163,7 +163,8 @@ function lm_reconciliar_stock_con_catalogo(): void
         foreach (['sucursal1', 'sucursal2'] as $node) {
             try {
                 $pdo = lm_pdo($node);
-                lm_upsert_stock_producto_pdo($pdo, $idProd, $nombre);
+                $idSuc = LmDatabase::sucursalIdForNode($node);
+                lm_upsert_stock_producto_pdo($pdo, $idProd, $nombre, $idSuc);
             } catch (Throwable $e) {
                 error_log($e->getMessage());
             }
@@ -215,8 +216,8 @@ function lm_guardar_producto(array $data): int
             $id = (int) $pdoCentral->lastInsertId();
         }
 
-        lm_upsert_stock_producto_pdo($connections['sucursal1'], $id, $nombre);
-        lm_upsert_stock_producto_pdo($connections['sucursal2'], $id, $nombre);
+        lm_upsert_stock_producto_pdo($connections['sucursal1'], $id, $nombre, LmDatabase::sucursalIdForNode('sucursal1'));
+        lm_upsert_stock_producto_pdo($connections['sucursal2'], $id, $nombre, LmDatabase::sucursalIdForNode('sucursal2'));
         $stmt = $connections['central']->prepare('DELETE FROM stock WHERE id_prod = ?');
         $stmt->execute([$id]);
 
@@ -512,6 +513,12 @@ function lm_stock_por_nodo(string $node): array
     return $resultados;
 }
 
+// ============================================================================
+// FUNCIONES COMENTADAS - AHORA USAN STORED PROCEDURES (lm_stored_procedures.php)
+// Estas funciones se mantienen por compatibilidad pero están desactivadas
+// para evitar conflicto de redeclaración con los wrappers de SPs.
+// ============================================================================
+
 function lm_stock_actualizar(int $idSuc, int $idProd, int $cantidad, string $motivo = 'Ajuste manual'): void
 {
     if (!lm_sucursal_operativa($idSuc)) {
@@ -526,19 +533,26 @@ function lm_stock_actualizar(int $idSuc, int $idProd, int $cantidad, string $mot
         throw new RuntimeException('El producto no existe.');
     }
 
+    $sucursalNombre = null;
+    try {
+        $row = lm_fetch_one('central', 'SELECT sucursal FROM sucursales WHERE id_suc = ?', [$idSuc]);
+        $sucursalNombre = $row['sucursal'] ?? null;
+    } catch (Throwable $e) {
+    }
+
     $pdo->beginTransaction();
     try {
-        $row = lm_fetch_one_pdo($pdo, 'SELECT id_stock, cantidad FROM stock WHERE id_prod = ? FOR UPDATE', [$idProd]);
+        $row = lm_fetch_one_pdo($pdo, 'SELECT id_stock, cantidad FROM stock WHERE id_prod = ? AND id_suc = ? FOR UPDATE', [$idProd, $idSuc]);
         if ($row) {
-            $stmt = $pdo->prepare('UPDATE stock SET cantidad = ? , producto = ? WHERE id_prod = ?');
-            $stmt->execute([$cantidad, $producto['producto'], $idProd]);
+            $stmt = $pdo->prepare('UPDATE stock SET cantidad = ?, producto = ?, id_suc = ?, sucursal = ? WHERE id_stock = ?');
+            $stmt->execute([$cantidad, $producto['producto'], $idSuc, $sucursalNombre, $row['id_stock']]);
         } else {
-            $stmt = $pdo->prepare('INSERT INTO stock (id_prod, producto, cantidad, stock_minimo) VALUES (?, ?, ?, 5)');
-            $stmt->execute([$idProd, $producto['producto'], $cantidad]);
+            $stmt = $pdo->prepare('INSERT INTO stock (id_prod, id_suc, sucursal, producto, cantidad, stock_minimo) VALUES (?, ?, ?, ?, ?, 5)');
+            $stmt->execute([$idProd, $idSuc, $sucursalNombre, $producto['producto'], $cantidad]);
         }
 
-        $stmt = $pdo->prepare('INSERT INTO movimientos_stock (id_prod, tipo, cantidad, motivo) VALUES (?, "ajuste", ?, ?)');
-        $stmt->execute([$idProd, abs($cantidad), $motivo]);
+        $stmt = $pdo->prepare('INSERT INTO movimientos_stock (id_prod, id_suc, tipo, cantidad, motivo) VALUES (?, ?, "ajuste", ?, ?)');
+        $stmt->execute([$idProd, $idSuc, abs($cantidad), $motivo]);
         $pdo->commit();
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
@@ -548,7 +562,7 @@ function lm_stock_actualizar(int $idSuc, int $idProd, int $cantidad, string $mot
     }
 }
 
-function lm_carrito_activo(int $idCli): array
+/* function lm_carrito_activo(int $idCli): array
 {
     $carrito = lm_fetch_one('central', "SELECT id_carrito, id_cli, fecha_creacion, estado FROM carrito WHERE id_cli = ? AND estado = 'activo' ORDER BY id_carrito DESC LIMIT 1", [$idCli]);
 
@@ -573,8 +587,9 @@ function lm_carrito_activo(int $idCli): array
 
     return $carrito;
 }
+*/
 
-function lm_carrito_agregar_item(int $idCli, int $idProd, int $cantidad): array
+/* function lm_carrito_agregar_item(int $idCli, int $idProd, int $cantidad): array
 {
     $cantidad = max(1, $cantidad);
     $producto = lm_producto_por_id($idProd);
@@ -614,15 +629,17 @@ function lm_carrito_agregar_item(int $idCli, int $idProd, int $cantidad): array
         throw $e;
     }
 }
+*/
 
-function lm_carrito_eliminar_item(int $idCli, int $idProd): array
+/* function lm_carrito_eliminar_item(int $idCli, int $idProd): array
 {
     $carrito = lm_carrito_activo($idCli);
     lm_execute('central', 'DELETE FROM detalle_carrito WHERE id_carrito = ? AND id_prod = ?', [$carrito['id_carrito'], $idProd]);
     return lm_carrito_activo($idCli);
 }
+*/
 
-function lm_carrito_vaciar(int $idCli): void
+/* function lm_carrito_vaciar(int $idCli): void
 {
     $carrito = lm_carrito_activo($idCli);
     $pdo = lm_pdo('central');
@@ -640,6 +657,7 @@ function lm_carrito_vaciar(int $idCli): void
         throw $e;
     }
 }
+*/
 
 function lm_venta_por_id(int $idVenta): ?array
 {
@@ -661,7 +679,7 @@ function lm_ventas_listar_por_cliente(int $idCli): array
     return lm_fetch_all('central', 'SELECT v.id_venta, c.cliente, s.sucursal, v.total, v.fecha_venta AS fecha, v.estado FROM ventas v INNER JOIN clientes c ON c.id_cli = v.id_cli INNER JOIN sucursales s ON s.id_suc = v.id_suc WHERE v.id_cli = ? ORDER BY v.fecha_venta DESC', [$idCli]);
 }
 
-function lm_registrar_venta(int $idCli, int $idSuc, array $items, ?int $idCarrito = null): array
+/* function lm_registrar_venta(int $idCli, int $idSuc, array $items, ?int $idCarrito = null): array
 {
     if (empty($items)) {
         throw new RuntimeException('El carrito está vacío.');
@@ -741,8 +759,9 @@ function lm_registrar_venta(int $idCli, int $idSuc, array $items, ?int $idCarrit
         ];
     });
 }
+*/
 
-function lm_registrar_compra(int $idProveedor, int $idSuc, int $idProd, int $cantidad, float $precioUnitario): array
+/* function lm_registrar_compra(int $idProveedor, int $idSuc, int $idProd, int $cantidad, float $precioUnitario): array
 {
     if ($cantidad <= 0 || $precioUnitario < 0) {
         throw new RuntimeException('Cantidad o precio inválidos.');
@@ -793,6 +812,7 @@ function lm_registrar_compra(int $idProveedor, int $idSuc, int $idProd, int $can
         ];
     });
 }
+*/
 
 function lm_compras_listar(): array
 {

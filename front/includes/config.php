@@ -71,3 +71,4 @@ define('DB_PASS_PROVEEDORES', LM_DB_PASS);
 
 require_once __DIR__ . '/lm_database.php';
 require_once __DIR__ . '/lm_services.php';
+require_once __DIR__ . '/lm_stored_procedures.php';

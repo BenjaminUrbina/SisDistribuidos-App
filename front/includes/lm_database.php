@@ -56,6 +56,15 @@ final class LmDatabase
         };
     }
 
+    public static function sucursalIdForNode(string $node): int
+    {
+        return match (self::canonicalNode($node)) {
+            'sucursal1' => 2,
+            'sucursal2' => 3,
+            default => 0,
+        };
+    }
+
     public static function isSimulatedDown(string $node): bool
     {
         $key = self::canonicalNode($node);
@@ -250,6 +259,118 @@ function estadoNodos(): array
 function lm_simular_caida_nodo(string $nodo, bool $caida = true): void
 {
     LmDatabase::simulateNodeDown($nodo, $caida);
+}
+
+/**
+ * Instala stored procedures y funciones desde un archivo SQL con DELIMITER
+ * usando PDO (no requiere mysql CLI ni Docker).
+ */
+function lm_install_routines_from_file(PDO $pdo, string $filePath): array
+{
+    if (!file_exists($filePath)) {
+        throw new InvalidArgumentException("Archivo SQL no encontrado: {$filePath}");
+    }
+    
+    $sql = file_get_contents($filePath);
+    $lines = explode("\n", $sql);
+    $results = [];
+    $currentStmt = '';
+    $inRoutine = false;
+    $delimiter = ';';
+    
+    foreach ($lines as $line) {
+        $trimmed = trim($line);
+        
+        // Saltar comentarios y líneas vacías
+        if ($trimmed === '' || str_starts_with($trimmed, '--') || str_starts_with($trimmed, '#')) {
+            if ($inRoutine) {
+                $currentStmt .= $line . "\n";
+            }
+            continue;
+        }
+        
+        // Detectar cambio de DELIMITER
+        if (str_starts_with(strtoupper($trimmed), 'DELIMITER ')) {
+            $parts = preg_split('/\s+/', $trimmed);
+            $newDelim = $parts[1] ?? ';';
+            
+            if ($inRoutine && $newDelim === ';') {
+                // Fin del bloque con DELIMITER ;
+                $stmt = trim($currentStmt);
+                if ($stmt !== '') {
+                    try {
+                        $pdo->exec($stmt);
+                        $results[] = ['type' => 'success', 'statement' => substr($stmt, 0, 80) . '...'];
+                    } catch (Throwable $e) {
+                        $results[] = ['type' => 'error', 'statement' => substr($stmt, 0, 80) . '...', 'error' => $e->getMessage()];
+                    }
+                }
+                $currentStmt = '';
+                $inRoutine = false;
+            }
+            $delimiter = $newDelim;
+            continue;
+        }
+        
+        // Detectar CREATE de routine
+        if (preg_match('/^\s*CREATE\s+(PROCEDURE|FUNCTION)\s/i', $trimmed)) {
+            $inRoutine = true;
+            $currentStmt = $line . "\n";
+            continue;
+        }
+        
+        if ($inRoutine) {
+            $currentStmt .= $line . "\n";
+            
+            // Detectar fin de la routine con el delimitador actual
+            if ($delimiter !== ';') {
+                $endMarker = 'END ' . $delimiter;
+                if (rtrim($trimmed) === $endMarker || str_ends_with(rtrim($trimmed), $endMarker)) {
+                    $stmt = trim($currentStmt);
+                    // Reemplazar el END con delimitador por END
+                    $stmt = preg_replace('/END\s+' . preg_quote($delimiter, '/') . '\s*$/', 'END', $stmt);
+                    if ($stmt !== '') {
+                        try {
+                            $pdo->exec($stmt);
+                            $results[] = ['type' => 'success', 'statement' => substr($stmt, 0, 80) . '...'];
+                        } catch (Throwable $e) {
+                            $results[] = ['type' => 'error', 'statement' => substr($stmt, 0, 80) . '...', 'error' => $e->getMessage()];
+                        }
+                    }
+                    $currentStmt = '';
+                    $inRoutine = false;
+                }
+            }
+        } elseif ($delimiter === ';') {
+            // Sentencia regular (CREATE TABLE, etc.)
+            $currentStmt .= $line . "\n";
+            if (str_ends_with(rtrim($trimmed), ';')) {
+                $stmt = trim($currentStmt);
+                if ($stmt !== '') {
+                    try {
+                        $pdo->exec($stmt);
+                        $results[] = ['type' => 'success', 'statement' => substr($stmt, 0, 80) . '...'];
+                    } catch (Throwable $e) {
+                        $results[] = ['type' => 'error', 'statement' => substr($stmt, 0, 80) . '...', 'error' => $e->getMessage()];
+                    }
+                }
+                $currentStmt = '';
+            }
+        }
+    }
+    
+    // Procesar cualquier statement restante
+    $stmt = trim($currentStmt);
+    if ($stmt !== '') {
+        try {
+            $pdo->exec($stmt);
+            $results[] = ['type' => 'success', 'statement' => substr($stmt, 0, 80) . '...'];
+        } catch (Throwable $e) {
+            $results[] = ['type' => 'error', 'statement' => substr($stmt, 0, 80) . '...', 'error' => $e->getMessage()];
+        }
+    }
+    
+    return $results;
 }
 
 function lm_restaurar_nodo(string $nodo): void

@@ -25,7 +25,7 @@ $usuarioActual = lm_usuario_actual();
             <div class="p-3 rounded mb-4" style="background: var(--lm-surface2); font-family: monospace; font-size: 0.9rem;">
 <?php
 try {
-    echo "<div>[1/7] Inicializando esquemas en todos los nodos...</div>";
+    echo "<div>[1/8] Inicializando esquemas en todos los nodos...</div>";
     
     // Esquema Central
     $pdoCentral = lm_pdo('central');
@@ -35,7 +35,7 @@ try {
         "CREATE TABLE IF NOT EXISTS usuarios (id_usuario INT AUTO_INCREMENT PRIMARY KEY, nombre VARCHAR(120), email VARCHAR(100) UNIQUE, password VARCHAR(255), rol ENUM('admin', 'vendedor', 'cliente') DEFAULT 'cliente', activo TINYINT(1) DEFAULT 1)",
         "CREATE TABLE IF NOT EXISTS sucursales (id_suc INT AUTO_INCREMENT PRIMARY KEY, sucursal VARCHAR(100) NOT NULL, direccion VARCHAR(200), activo TINYINT(1) DEFAULT 1)",
         "CREATE TABLE IF NOT EXISTS proveedores (id_proveedor INT AUTO_INCREMENT PRIMARY KEY, proveedor VARCHAR(120) NOT NULL, email VARCHAR(100), telefono VARCHAR(20), direccion VARCHAR(200), activo TINYINT(1) DEFAULT 1)",
-        "CREATE TABLE IF NOT EXISTS ventas (id_venta INT AUTO_INCREMENT PRIMARY KEY, id_cli INT, id_suc INT, total DECIMAL(12,2), estado ENUM('pendiente', 'confirmada', 'cancelada') DEFAULT 'pendiente', fecha_venta DATETIME DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS ventas (id_venta INT AUTO_INCREMENT PRIMARY KEY, id_cli INT, id_suc INT, total DECIMAL(12,2), estado ENUM('pendiente', 'preparada', 'confirmada', 'cancelada') DEFAULT 'pendiente', fecha_venta DATETIME DEFAULT CURRENT_TIMESTAMP)",
         "CREATE TABLE IF NOT EXISTS detalle_ventas (id_detalle_venta INT AUTO_INCREMENT PRIMARY KEY, id_venta INT, id_prod INT, cantidad INT, precio_unitario DECIMAL(12,2), subtotal DECIMAL(12,2))",
         "CREATE TABLE IF NOT EXISTS compras (id_compra INT AUTO_INCREMENT PRIMARY KEY, id_proveedor INT, id_suc INT, total DECIMAL(12,2), fecha_compra DATETIME DEFAULT CURRENT_TIMESTAMP)",
         "CREATE TABLE IF NOT EXISTS detalle_compras (id_detalle_compra INT AUTO_INCREMENT PRIMARY KEY, id_compra INT, id_prod INT, cantidad INT, precio_unitario DECIMAL(12,2), subtotal DECIMAL(12,2))",
@@ -58,24 +58,77 @@ try {
         }
     }
 
-    echo "<div>[2/7] Limpiando datos antiguos...</div>";
+    echo "<div>[2/8] Instalando procedimientos almacenados y tabla de logs...</div>";
+    
+    $spCentralFile = '/docker/mysql/procedures_central.sql';
+    $spSucursalFile = '/docker/mysql/procedures_sucursal.sql';
+    
+    // Instalar SPs en nodo central vía PDO
+    if (file_exists($spCentralFile)) {
+        try {
+            $pdo = lm_pdo('central');
+            $results = lm_install_routines_from_file($pdo, $spCentralFile);
+            $errors = array_filter($results, fn($r) => $r['type'] === 'error');
+            if (empty($errors)) {
+                echo "<div class='text-success small'>✓ " . count($results) . " procedimientos centrales instalados</div>";
+            } else {
+                foreach ($errors as $e) {
+                    echo "<div class='text-danger small'>✗ " . htmlspecialchars($e['error'] ?? 'Error desconocido') . "</div>";
+                }
+            }
+        } catch (Throwable $e) {
+            echo "<div class='text-danger small'>✗ Error central: " . htmlspecialchars($e->getMessage()) . "</div>";
+        }
+    }
+    
+    // Instalar SPs en nodos sucursales vía PDO
+    if (file_exists($spSucursalFile)) {
+        foreach (['sucursal1', 'sucursal2'] as $node) {
+            if (LmDatabase::ping($node)) {
+                try {
+                    $pdo = lm_pdo($node);
+                    $results = lm_install_routines_from_file($pdo, $spSucursalFile);
+                    $errors = array_filter($results, fn($r) => $r['type'] === 'error');
+                    if (empty($errors)) {
+                        echo "<div class='text-success small'>✓ " . count($results) . " procedimientos instalados en {$node}</div>";
+                    } else {
+                        foreach ($errors as $e) {
+                            echo "<div class='text-danger small'>✗ Error en {$node}: " . htmlspecialchars($e['error'] ?? 'Error desconocido') . "</div>";
+                        }
+                    }
+                } catch (Throwable $e) {
+                    echo "<div class='text-danger small'>✗ Error en {$node}: " . htmlspecialchars($e->getMessage()) . "</div>";
+                }
+            }
+        }
+    }
+
+    echo "<div>[3/8] Limpiando datos antiguos...</div>";
     $pdoCentral->exec("SET FOREIGN_KEY_CHECKS = 0");
-    $allTables = ['productos', 'clientes', 'usuarios', 'sucursales', 'proveedores', 'ventas', 'detalle_ventas', 'compras', 'detalle_compras', 'carrito', 'detalle_carrito', 'stock', 'movimientos_stock'];
+    
+    // Tablas del nodo central
+    $allTables = ['productos', 'clientes', 'usuarios', 'sucursales', 'proveedores', 'ventas', 'detalle_ventas', 'compras', 'detalle_compras', 'carrito', 'detalle_carrito', 'stock', 'movimientos_stock', 'log_transacciones'];
     foreach ($allTables as $t) {
         if ($pdoCentral->query("SHOW TABLES LIKE '$t'")->rowCount() > 0) {
             $pdoCentral->exec("TRUNCATE TABLE $t");
         }
     }
+    
+    // Tablas de nodos sucursales
     foreach (['sucursal1', 'sucursal2'] as $node) {
         if (LmDatabase::ping($node)) {
             $pdoNode = lm_pdo($node);
             $pdoNode->exec("TRUNCATE TABLE stock");
             $pdoNode->exec("TRUNCATE TABLE movimientos_stock");
+            // Solo truncar log_transacciones si existe (se crea en ambos nodos por los SPs)
+            if ($pdoNode->query("SHOW TABLES LIKE 'log_transacciones'")->rowCount() > 0) {
+                $pdoNode->exec("TRUNCATE TABLE log_transacciones");
+            }
         }
     }
     $pdoCentral->exec("SET FOREIGN_KEY_CHECKS = 1");
 
-    echo "<div>[3/7] Creando sucursales y proveedores...</div>";
+    echo "<div>[4/8] Creando sucursales y proveedores...</div>";
     $pdoCentral->exec("INSERT INTO sucursales (id_suc, sucursal, direccion) VALUES 
         (2, 'Sucursal La Serena', 'Av. Balmaceda 1234'),
         (3, 'Sucursal Coquimbo', 'Calle Aldunate 567')");
@@ -85,7 +138,7 @@ try {
         ('Distribuidora El Faro', 'ventas@elfaro.cl', '+56 51 222 3344', 'Panamericana Norte km 450'),
         ('Importaciones Asia', 'info@importasia.cl', '+56 9 8877 6655', 'San Alfonso, Santiago')");
 
-    echo "<div>[4/7] Insertando catálogo de productos...</div>";
+    echo "<div>[5/8] Insertando catálogo de productos...</div>";
     $productos = [
         ['Smartphone Samsung S23', 'Gama alta, 256GB', 899990],
         ['Laptop Dell Latitude', 'i7, 16GB RAM, 512GB SSD', 1250000],
@@ -102,7 +155,7 @@ try {
         lm_guardar_producto(['producto' => $p[0], 'descripcion' => $p[1], 'precio' => $p[2]]);
     }
 
-    echo "<div>[5/7] Configurando cuentas de usuario (Admin, Vendedor, Clientes)...</div>";
+    echo "<div>[6/8] Configurando cuentas de usuario (Admin, Vendedor, Clientes)...</div>";
     lm_guardar_usuario(['nombre' => 'Admin Sistema', 'email' => 'admin@demo.local', 'password' => 'admin123', 'rol' => 'admin']);
     lm_guardar_usuario(['nombre' => 'Vendedor Norte', 'email' => 'vendedor@demo.local', 'password' => 'vendedor123', 'rol' => 'vendedor']);
 
@@ -115,15 +168,25 @@ try {
         lm_guardar_cliente(['cliente' => $c[0], 'rut' => $c[1], 'email' => $c[2], 'telefono' => $c[3], 'direccion' => $c[4], 'password' => 'cliente123', 'rol' => 'cliente']);
     }
 
-    echo "<div>[6/7] Distribuyendo stock inicial entre nodos sucursales (ACID)...</div>";
+    echo "<div>[7/8] Distribuyendo stock inicial entre nodos sucursales...</div>";
     $allProds = lm_catalogo_productos(true);
     foreach ($allProds as $p) {
         $idProd = (int)$p['id_prod'];
+        // Usar función original que funciona correctamente
         lm_stock_actualizar(2, $idProd, rand(10, 50), 'Carga inicial');
         lm_stock_actualizar(3, $idProd, rand(10, 50), 'Carga inicial');
     }
 
-    echo "<div class='text-success mt-2 fw-bold text-center'>[7/7] ¡OPERACIÓN COMPLETADA CON ÉXITO!</div>";
+    echo "<div class='text-success mt-2 fw-bold text-center'>[8/8] ¡OPERACIÓN COMPLETADA CON ÉXITO!</div>";
+    echo "<div class='text-muted small mt-2 text-center'>Procedimientos almacenados instalados y listos para usar</div>";
+    echo "<div class='mt-3'>
+        <a href='test_concurrencia.php' class='btn btn-info btn-sm me-2' target='_blank'>
+            <i class='bi bi-people me-1'></i>Test Concurrencia
+        </a>
+        <a href='nodos.php' class='btn btn-outline-danger btn-sm' target='_blank'>
+            <i class='bi bi-wifi-off me-1'></i>Monitor de Nodos
+        </a>
+    </div>";
 
 } catch (Throwable $e) {
     echo "<div class='text-danger mt-2'>ERROR: " . htmlspecialchars($e->getMessage()) . "</div>";
